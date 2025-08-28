@@ -6,18 +6,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="https://cdn.jsdelivr.net/npm/ical.js@1.5.0/build/ical.min.js"></script>
 <style>
-  body{font-family:Arial,Helvetica,sans-serif;background:#f4f6f8;margin:0}
-  header{padding:10px;background:#fff;border-bottom:1px solid #ccc;position:sticky;top:0;display:flex;flex-wrap:wrap;gap:10px;align-items:center;z-index:3}
-  button,select,input[type=date]{padding:6px 10px;border:1px solid #ccc;border-radius:5px;cursor:pointer;background:#fff}
-  .grid{border-collapse:collapse;width:100%;background:#fff;box-shadow:0 2px 5px rgba(0,0,0,0.1)}
-  .grid th,.grid td{border:1px solid #ddd;vertical-align:top;padding:6px}
-  .grid thead th{background:#f0f2f5;position:sticky;top:50px;z-index:2}
-  .time-col{width:70px;background:#fafafa;font-weight:600;text-align:center}
-  .event{background:#e8f0fe;border-left:4px solid #4285f4;margin:3px 0;padding:4px 6px;border-radius:4px;font-size:13px}
+  :root { --bg:#f4f6f8; --card:#fff; --muted:#6b7280; --line:#e5e7eb; --head:#f0f2f5; --accent:#4285f4; }
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);margin:0;color:#111}
+  header{padding:10px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:3;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  button,select,input[type=date]{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer}
+  button:hover{background:#fafafa}
+  .grid{border-collapse:collapse;width:100%;background:var(--card);box-shadow:0 2px 6px rgba(0,0,0,.06)}
+  .grid th,.grid td{border:1px solid var(--line);vertical-align:top;padding:8px}
+  .grid thead th{background:var(--head);position:sticky;top:60px;z-index:2}
+  .time-col{width:80px;background:#fbfbfb;font-weight:600;text-align:center}
+  .event{background:#e8f0fe;border-left:4px solid var(--accent);border-radius:6px;margin:4px 0;padding:6px 8px;font-size:13px;line-height:1.25}
   .event .title{font-weight:600}
+  .muted{color:var(--muted);font-size:12px}
   .filters{margin-left:auto;display:flex;gap:10px}
-  .muted{color:#6b7280;font-size:12px}
-  .header-note{font-size:12px;color:#6b7280;margin:10px 0 0 10px}
+  .wrap{padding:12px}
 </style>
 </head>
 <body>
@@ -31,123 +33,143 @@
   <div class="filters">
     <select id="fieldFilter"><option value="">All Fields</option></select>
     <select id="divisionFilter"><option value="">All Divisions</option></select>
-    <select id="complexSort">
+    <select id="sortMode">
+      <option value="smart">Sort Fields: Complex/Number</option>
       <option value="alpha">Sort Fields: A→Z</option>
-      <option value="byAlias">Sort Fields: Smart</option>
     </select>
   </div>
   <span id="status" class="muted"></span>
 </header>
 
-<div class="header-note muted">
-  Tip: headers show friendly field names. Hover events to see full addresses.
-</div>
-
-<table class="grid" id="grid"></table>
+<div class="wrap"><table class="grid" id="grid"></table></div>
 
 <script>
-/* ---------- CONFIG ---------- */
+/* ============= CONFIG ============= */
 const FEED_URL = "https://calendar.bluesombrero.com/api/v1/Calendar?instancekey=leagues&portalId=81458&id=46369345&key=YSOC5AJG";
-const START_HOUR = 7, END_HOUR = 22;
-const AUTO_REFRESH_MS = 60000;
+const START_HOUR = 7;     // grid start
+const END_HOUR   = 22;    // grid end
+const REFRESH_MS = 60000; // 60s
 
-/* Optional alias rules to beautify headers (left side = substring to detect, right side = label) */
-const FIELD_ALIASES = [
-  // McInnish / MacArthur / Pepper / Jaycee / RDL examples (edit/extend freely)
-  { match:/\bMcInnish\b.*Field\s*14/i, label:"McInnish 14" },
-  { match:/\bMcInnish\b.*Field\s*15/i, label:"McInnish 15" },
-  { match:/\bPepper\b.*North/i,       label:"Pepper North" },
-  { match:/\bPepper\b.*South/i,       label:"Pepper South" },
-  { match:/\bJaycee\b/i,              label:"Jaycee Park"  },
-  { match:/\bMac(Arthur)?\s*12\b/i,   label:"Mac 12"       },
-  { match:/\bMac(Arthur)?\s*13\b/i,   label:"Mac 13"       },
-  { match:/\bMac(Arthur)?\s*14\b/i,   label:"Mac 14"       },
-  { match:/\bRDL\b/i,                 label:"RDL"          }
+/* OPTIONAL: precise aliases so headers look exactly like your sample */
+const ALIASES = [
+  { test:/\bmcinnish\b.*field\s*14/i, to:"McInnish Baseball Field 14" },
+  { test:/\bmcinnish\b.*field\s*15/i, to:"McInnish Baseball Field 15" },
+  { test:/\bpepper\b.*north/i,        to:"Pepper North" },
+  { test:/\bpepper\b.*south/i,        to:"Pepper South" },
+  { test:/\bjaycee\b/i,               to:"Jaycee Park"  },
+  { test:/\bmac(arthur)?\s*12\b/i,    to:"Mac 12"       },
+  { test:/\bmac(arthur)?\s*13\b/i,    to:"Mac 13"       },
+  { test:/\bmac(arthur)?\s*14\b/i,    to:"Mac 14"       },
+  { test:/\brdl\b/i,                  to:"RDL"          }
 ];
 
-/* ---------- STATE ---------- */
+/* ============= STATE ============= */
 let currentDay = new Date();
-let eventsAll = [];         // raw events
-let fieldsRaw = [];         // raw field strings (from LOCATION or @title)
-let fieldsFriendly = [];    // deduped + friendly headers
-let fieldMap = new Map();   // raw -> friendly
-let gameDates = [];         // ISO days that have at least one event
+let allEvents = [];           // {s,e,t,l,div}
+let gameDates = [];           // ["YYYY-MM-DD", ...]
+let fieldMap = new Map();     // rawField -> friendly
+let fieldsFriendly = [];      // ["McInnish Baseball Field 14", ...]
+/* ================================= */
 
-/* ---------- UTIL ---------- */
-const toISO = d => new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
-const addDays = (d,n)=>{ const x=new Date(d); x.setDate(x.getDate()+n); return x; };
-const fmtTime = d => new Intl.DateTimeFormat([], {hour:"numeric", minute:"2-digit"}).format(d);
-const uniq = arr => [...new Set(arr)];
-const nonEmpty = s => s && String(s).trim().length>0;
+const pad=n=>String(n).padStart(2,"0");
+const localYMD=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const addDays=(d,n)=>{const x=new Date(d.getTime()); x.setDate(x.getDate()+n); return x;};
+const fmtTime=d=>new Intl.DateTimeFormat([], {hour:"numeric", minute:"2-digit"}).format(d);
+const uniq=arr=>[...new Set(arr)];
+const isNonEmpty=s=>s && String(s).trim().length>0;
 
-/* Clean a LOCATION or @Field string down to a friendly “header” name */
-function toFriendlyFieldName(raw) {
-  if (!nonEmpty(raw)) return "";
-  let base = String(raw).trim();
-
-  // If title had "Team A @ McInnish Baseball Field 14, 123 Main..." extract after '@'
-  const at = base.indexOf("@");
-  if (at !== -1) base = base.slice(at+1).trim();
-
-  // Drop anything after " - " or "(" (often extra notes) and after first comma (addresses)
-  base = base.split(" - ")[0].split("(")[0].split(",")[0].trim();
-
-  // Apply alias rules
-  for (const rule of FIELD_ALIASES) {
-    if (rule.match.test(raw) || rule.match.test(base)) return rule.label;
-  }
-
-  // Heuristic: if it contains “Field xx”, keep complex + number
-  const mField = base.match(/(.*?\bField\s*\d+\b)/i);
-  if (mField) return mField[1].replace(/\s+/g," ").trim();
-
-  // Heuristic: keep common complexes short
-  const complexes = ["McInnish","MacArthur","Pepper","Jaycee","RDL"];
-  for (const c of complexes){
-    if (new RegExp("\\b"+c+"\\b","i").test(base)) {
-      // Try to keep a trailing number if present
-      const mNum = base.match(/\b(\d{1,2})\b/);
-      return (c + (mNum ? " " + mNum[1] : "")).trim();
-    }
-  }
-
-  // Fallback: return trimmed first part
-  return base;
-}
-
-/* Detect the 'raw field' a specific event belongs to */
-function rawFieldForEvent(ev) {
-  // prefer LOCATION
-  if (nonEmpty(ev.l)) return ev.l;
-  // else parse from title after '@'
-  const m = (ev.t||"").match(/@(.+)/);
-  if (m) return m[1].trim();
-  return "";
-}
-
-/* Division detector (e.g., 10U, 12U) */
+/* Detect division tags like 7/8 A National or 10U; here we normalize common "##U" */
 function detectDivision(summary){
   const m = (summary||"").match(/\b(\d{2}U)\b/i);
   return m ? m[1].toUpperCase() : "";
 }
 
-/* Smart sort: try to group by complex names, then by numbers */
+/* Get a raw "field string" from LOCATION or from "@ Field" in the title */
+function rawField(ev){
+  if (isNonEmpty(ev.l)) return ev.l;
+  const m = (ev.t||"").match(/@(.+)/); // Teams @ McInnish Baseball Field 14
+  return m ? m[1].trim() : "";
+}
+
+/* Heuristics to convert raw LOCATION lines to friendly field names (no addresses) */
+function toFriendly(raw){
+  if (!isNonEmpty(raw)) return "";
+
+  // 1) If title-like piece exists after "@", prefer that portion
+  let s = String(raw).trim();
+
+  // 2) Try alias rules first (these take precedence)
+  for (const a of ALIASES){
+    if (a.test.test(s)) return a.to;
+  }
+
+  // 3) Split by common separators and evaluate parts
+  // Keep parts that look like complex/field labels, drop pure addresses
+  const parts = s.split(/[;|\-]|,|\n/).map(p=>p.trim()).filter(Boolean);
+
+  // Heuristics for addresses (we want to skip these)
+  const looksLikeAddress = p => /\d{3,5}\s+\w+/.test(p) || /\b(road|rd|lane|ln|drive|dr|street|st|ave|avenue|blvd|tx|texas|dallas|carrollton|richardson|irving|lewisville|zip)\b/i.test(p);
+
+  // Find the best part
+  let best = "";
+  for (const p of parts){
+    if (looksLikeAddress(p)) continue;
+    if (/\b(field|north|south|park|complex|pepper|mcinnish|mac|macarthur|rdl|jaycee)\b/i.test(p)) {
+      // If it includes "field <num>", keep that number
+      const m = p.match(/\bfield\s*(\d+)\b/i);
+      if (/\bmcinnish\b/i.test(p) && m) return `McInnish Baseball Field ${m[1]}`;
+      if (/\bpepper\b/i.test(p) && /\bnorth\b/i.test(p)) return "Pepper North";
+      if (/\bpepper\b/i.test(p) && /\bsouth\b/i.test(p)) return "Pepper South";
+      if (/\bmac(arthur)?\b/i.test(p)) {
+        const n = (p.match(/\b(\d{1,2})\b/)||[])[1];
+        if (n) return `Mac ${n}`;
+      }
+      if (/\brdl\b/i.test(p)) return "RDL";
+      if (/\bjaycee\b/i.test(p)) return "Jaycee Park";
+      best = p; // fallback candidate
+    }
+  }
+
+  // 4) As a last resort, if the raw contains McInnish + number anywhere:
+  const m1 = s.match(/\bmcinnish\b.*?\bfield\s*(\d+)\b/i);
+  if (m1) return `McInnish Baseball Field ${m1[1]}`;
+
+  // 5) Mac with number
+  const m2 = s.match(/\bmac(arthur)?\b.*\b(\d{1,2})\b/i);
+  if (m2) return `Mac ${m2[2]}`;
+
+  // 6) Pepper North/South anywhere
+  if (/\bpepper\b.*\bnorth\b/i.test(s)) return "Pepper North";
+  if (/\bpepper\b.*\bsouth\b/i.test(s)) return "Pepper South";
+
+  // 7) Jaycee
+  if (/\bjaycee\b/i.test(s)) return "Jaycee Park";
+
+  // 8) RDL token
+  if (/\brdl\b/i.test(s)) return "RDL";
+
+  // 9) Fallback to the first non-address part (if any), else the whole string trimmed
+  const nonAddr = parts.find(p=>!looksLikeAddress(p)) || s;
+  return nonAddr;
+}
+
+/* Smart sort groups by complex then number */
 function smartSort(a,b){
   const key = s=>{
-    const m = s.match(/(\D+)\s*(\d+)?/); // text + optional number
-    return [ (m?.[1]||s).toLowerCase(), Number(m?.[2]||0) ];
+    const m = s.match(/([^\d]+)?\s*(\d+)?/);
+    return [(m?.[1]||"").trim().toLowerCase(), Number(m?.[2]||0)];
   };
   const ka=key(a), kb=key(b);
   return ka[0]===kb[0] ? ka[1]-kb[1] : (ka[0] < kb[0] ? -1 : 1);
 }
 
-/* ---------- LOAD & PREP ---------- */
+/* ---------- LOAD FEED ---------- */
 async function loadFeed(){
-  document.getElementById("status").textContent="Loading…";
-  const txt = await fetch(FEED_URL,{cache:"no-store"}).then(r=>r.text());
-  const jcal = ICAL.parse(txt);
+  document.getElementById("status").textContent = "Loading…";
+  const text = await fetch(FEED_URL, { cache:"no-store" }).then(r=>r.text());
+  const jcal = ICAL.parse(text);
   const comp = new ICAL.Component(jcal);
-  eventsAll = comp.getAllSubcomponents("vevent").map(v=>new ICAL.Event(v)).map(e=>({
+  allEvents = comp.getAllSubcomponents("vevent").map(v=>new ICAL.Event(v)).map(e=>({
     s: e.startDate.toJSDate(),
     e: e.endDate.toJSDate(),
     t: e.summary || "",
@@ -155,140 +177,122 @@ async function loadFeed(){
     div: detectDivision(e.summary || "")
   }));
 
-  // Build raw fields (LOCATION or @title), then map to friendly
-  const raws = eventsAll.map(ev => rawFieldForEvent(ev)).filter(nonEmpty);
-  fieldsRaw = uniq(raws);
+  // Build field map raw->friendly
   fieldMap.clear();
-  fieldsFriendly = fieldsRaw.map(raw=>{
-    const friendly = toFriendlyFieldName(raw);
-    fieldMap.set(raw, friendly);
-    return friendly;
-  });
-  // Dedupe friendly names (different addresses mapping to same field)
-  fieldsFriendly = uniq(fieldsFriendly);
+  const rawSet = uniq(allEvents.map(ev=>rawField(ev)).filter(isNonEmpty));
+  rawSet.forEach(raw => fieldMap.set(raw, toFriendly(raw)));
 
-  // Sort fields (default smart)
-  applyFieldSort();
+  // All friendly names (dedup), sorted
+  fieldsFriendly = uniq([...fieldMap.values()].filter(isNonEmpty));
+  const mode = document.getElementById("sortMode").value;
+  fieldsFriendly.sort(mode==="alpha" ? (a,b)=>a.localeCompare(b) : smartSort);
 
-  // Build game dates array
-  gameDates = uniq(eventsAll.map(ev => toISO(ev.s))).sort();
+  // Game dates
+  gameDates = uniq(allEvents.map(ev => localYMD(ev.s))).sort();
 
   populateFilters();
   render();
-  document.getElementById("status").textContent = `Loaded ${eventsAll.length} events • ${fieldsFriendly.length} fields • ${gameDates.length} game days`;
+  document.getElementById("status").textContent = `Loaded ${allEvents.length} events • ${fieldsFriendly.length} fields • ${gameDates.length} game days`;
 }
 
-function applyFieldSort(){
-  const mode = document.getElementById("complexSort")?.value || "byAlias";
-  if (mode === "alpha") fieldsFriendly.sort((a,b)=>a.localeCompare(b));
-  else fieldsFriendly.sort(smartSort);
-}
-
-/* ---------- UI POPULATION ---------- */
+/* ---------- UI ---------- */
 function populateFilters(){
-  // Field filter uses friendly names
-  const ff = document.getElementById("fieldFilter");
-  ff.innerHTML = '<option value="">All Fields</option>' + fieldsFriendly.map(f=>`<option>${f}</option>`).join("");
+  // Field filter (friendly headers)
+  const $f = document.getElementById("fieldFilter");
+  $f.innerHTML = '<option value="">All Fields</option>' + fieldsFriendly.map(f=>`<option>${f}</option>`).join("");
 
-  const divisions = uniq(eventsAll.map(e=>e.div).filter(nonEmpty)).sort();
-  const df = document.getElementById("divisionFilter");
-  df.innerHTML = '<option value="">All Divisions</option>' + divisions.map(d=>`<option>${d}</option>`).join("");
+  // Division filter
+  const divs = uniq(allEvents.map(e=>e.div).filter(isNonEmpty)).sort();
+  const $d = document.getElementById("divisionFilter");
+  $d.innerHTML = '<option value="">All Divisions</option>' + divs.map(d=>`<option>${d}</option>`).join("");
 }
 
-/* ---------- RENDER ---------- */
-function detectFriendlyFieldForEvent(ev){
-  const raw = rawFieldForEvent(ev);
-  const friendly = fieldMap.get(raw) || toFriendlyFieldName(raw);
-  return friendly || "";
+/* ---------- RENDER GRID ---------- */
+function friendlyForEvent(ev){
+  const raw = rawField(ev);
+  return fieldMap.get(raw) || toFriendly(raw);
 }
 
 function render(){
-  const iso = toISO(currentDay);
-  const dayStart = new Date(iso+"T00:00");
-  const dayEnd = new Date(iso+"T23:59:59.999");
+  const iso = localYMD(currentDay);
+  const dayStart = new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(), 0,0,0,0);
+  const dayEnd   = new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(), 23,59,59,999);
+
   const fieldFilter = document.getElementById("fieldFilter").value;
-  const divFilter = document.getElementById("divisionFilter").value;
+  const divFilter   = document.getElementById("divisionFilter").value;
 
-  const todayEvents = eventsAll
+  const todayEvents = allEvents
     .filter(ev => ev.e > dayStart && ev.s < dayEnd)
-    .filter(ev => !divFilter || ev.div === divFilter);
+    .map(ev => ({...ev, field: friendlyForEvent(ev)}))
+    .filter(ev => isNonEmpty(ev.field))
+    .filter(ev => !divFilter || ev.div === divFilter)
+    .filter(ev => !fieldFilter || ev.field === fieldFilter);
 
-  // Bucket by friendly field
-  const byField = {};
-  fieldsFriendly.forEach(f => byField[f] = []);
+  // Prepare columns
+  const visibleFields = fieldFilter ? [fieldFilter] : fieldsFriendly.slice();
 
-  todayEvents.forEach(ev=>{
-    const friendly = detectFriendlyFieldForEvent(ev);
-    if (!friendly) return;
-    if (fieldFilter && friendly !== fieldFilter) return;
-    if (!byField[friendly]) byField[friendly] = [];
-    byField[friendly].push(ev);
-  });
+  // Bucket events by field
+  const byField = Object.fromEntries(visibleFields.map(f=>[f, []]));
+  todayEvents.forEach(ev => { if (byField[ev.field]) byField[ev.field].push(ev); });
 
+  // Build table
   const hrs = Array.from({length: END_HOUR-START_HOUR+1}, (_,i)=>START_HOUR+i);
   let html = "<thead><tr><th class='time-col'>Time</th>";
-  const visibleFields = fieldFilter ? [fieldFilter] : fieldsFriendly;
   visibleFields.forEach(f => html += `<th>${f}</th>`);
   html += "</tr></thead><tbody>";
 
   for (const h of hrs){
-    const slotStart = new Date(currentDay); slotStart.setHours(h,0,0,0);
-    const slotEnd = new Date(currentDay);   slotEnd.setHours(h+1,0,0,0);
-
+    const slotStart = new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(), h, 0, 0, 0);
+    const slotEnd   = new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(), h+1, 0, 0, 0);
     html += `<tr><th class="time-col">${new Intl.DateTimeFormat([], {hour:"numeric"}).format(slotStart)}</th>`;
     for (const f of visibleFields){
-      const evs = (byField[f]||[]).filter(ev => ev.e > slotStart && ev.s < slotEnd);
-      const cell = evs.map(ev => {
-        const fullLoc = (ev.l||"").replace(/\s+/g," ").trim();
-        return `<div class="event" title="${fullLoc}">
-                  <div class="time">${fmtTime(ev.s)}–${fmtTime(ev.e)}</div>
-                  <div class="title">${ev.t}</div>
-                  ${ev.div ? `<div class="muted">${ev.div}</div>` : ""}
-                </div>`;
-      }).join("");
+      const cell = (byField[f]||[])
+        .filter(ev => ev.e > slotStart && ev.s < slotEnd)
+        .map(ev => `<div class="event" title="${(ev.l||"").replace(/\s+/g," ").trim()}">
+                      <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
+                      <div class="title">${ev.t}</div>
+                      ${ev.div ? `<div class="muted">${ev.div}</div>` : ""}
+                    </div>`).join("");
       html += `<td>${cell}</td>`;
     }
     html += "</tr>";
   }
   html += "</tbody>";
   document.getElementById("grid").innerHTML = html;
-
-  // Status line
-  const shownCount = todayEvents.filter(ev=>{
-    const friendly = detectFriendlyFieldForEvent(ev);
-    return !fieldFilter || friendly===fieldFilter;
-  }).length;
-  document.getElementById("status").textContent = `Showing ${iso} • ${shownCount} events`;
+  document.getElementById("status").textContent = `Showing ${iso} • ${todayEvents.length} events`;
 }
 
 /* ---------- NAV ---------- */
 function jumpToGame(next=true){
   if (gameDates.length===0) return;
-  const iso = toISO(currentDay);
+  const iso = localYMD(currentDay);
   if (next){
     const nxt = gameDates.find(d => d > iso);
-    if (nxt){ currentDay = new Date(nxt); document.getElementById("picker").value = nxt; render(); }
+    if (nxt){ currentDay = new Date(nxt+"T12:00:00"); document.getElementById("picker").value = nxt; render(); }
   } else {
     const prev = [...gameDates].reverse().find(d => d < iso);
-    if (prev){ currentDay = new Date(prev); document.getElementById("picker").value = prev; render(); }
+    if (prev){ currentDay = new Date(prev+"T12:00:00"); document.getElementById("picker").value = prev; render(); }
   }
 }
 
 /* ---------- WIRE UP ---------- */
-document.getElementById("prevDay").onclick = ()=>{ currentDay = addDays(currentDay,-1); document.getElementById("picker").value = toISO(currentDay); render(); };
-document.getElementById("nextDay").onclick = ()=>{ currentDay = addDays(currentDay, 1); document.getElementById("picker").value = toISO(currentDay); render(); };
-document.getElementById("today").onclick   = ()=>{ currentDay = new Date();        document.getElementById("picker").value = toISO(currentDay); render(); };
+document.getElementById("picker").value = localYMD(currentDay);
+document.getElementById("prevDay").onclick = ()=>{ currentDay = addDays(currentDay,-1); document.getElementById("picker").value = localYMD(currentDay); render(); };
+document.getElementById("nextDay").onclick = ()=>{ currentDay = addDays(currentDay, 1); document.getElementById("picker").value = localYMD(currentDay); render(); };
+document.getElementById("today").onclick   = ()=>{ currentDay = new Date();             document.getElementById("picker").value = localYMD(currentDay); render(); };
 document.getElementById("prevGame").onclick = ()=> jumpToGame(false);
 document.getElementById("nextGame").onclick = ()=> jumpToGame(true);
 document.getElementById("picker").onchange  = e => { currentDay = new Date(e.target.value+"T12:00:00"); render(); };
 document.getElementById("fieldFilter").onchange = render;
 document.getElementById("divisionFilter").onchange = render;
-document.getElementById("complexSort").onchange = ()=>{ applyFieldSort(); populateFilters(); render(); };
+document.getElementById("sortMode").onchange = ()=>{ 
+  fieldsFriendly.sort(document.getElementById("sortMode").value==="alpha" ? (a,b)=>a.localeCompare(b) : smartSort);
+  populateFilters(); render();
+};
 
-// init
-document.getElementById("picker").value = toISO(currentDay);
+/* Init + refresh */
 loadFeed();
-setInterval(loadFeed, AUTO_REFRESH_MS);
+setInterval(loadFeed, REFRESH_MS);
 </script>
 </body>
 </html>
