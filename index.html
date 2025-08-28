@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CFBBA Schedule</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/ical.js@1.5.0/build/ical.min.js"></script>
+<style>
+body{font-family:sans-serif;background:#fafafa;margin:0}
+header{padding:10px;background:#fff;border-bottom:1px solid #ddd;position:sticky;top:0}
+button{margin:0 5px;padding:5px 10px}
+.grid{border-collapse:collapse;width:100%;background:#fff}
+.grid th,.grid td{border:1px solid #ddd;vertical-align:top;padding:4px}
+.time-col{width:80px;background:#f8f8f8}
+.event{background:#eef2ff;border:1px solid #c7d2fe;margin:2px 0;padding:4px;border-radius:6px;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <button id="prev">◀</button>
+  <button id="today">Today</button>
+  <button id="next">▶</button>
+  <input type="date" id="picker">
+  <span id="status"></span>
+</header>
+<table class="grid" id="grid"></table>
+
+<script>
+const FEED_URL = "https://calendar.bluesombrero.com/api/v1/Calendar?instancekey=leagues&portalId=81458&id=46369345&key=YSOC5AJG";
+const FIELDS = ["RDL","Mac 12","Mac 13","Mac 14"]; // edit as needed
+const START_HOUR = 7, END_HOUR = 22;
+let currentDay = new Date();
+
+function toISO(d){return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);}
+function addDays(d,n){let x=new Date(d);x.setDate(x.getDate()+n);return x;}
+function fmtTime(d){return new Intl.DateTimeFormat([], {hour:"numeric",minute:"2-digit"}).format(d);}
+
+async function load(){
+  document.getElementById("status").textContent="Loading…";
+  const txt=await fetch(FEED_URL,{cache:"no-store"}).then(r=>r.text());
+  const jcal=ICAL.parse(txt);const comp=new ICAL.Component(jcal);
+  const events=comp.getAllSubcomponents("vevent").map(v=>new ICAL.Event(v));
+  const day=toISO(currentDay), dayStart=new Date(day+"T00:00:00"), dayEnd=new Date(day+"T23:59:59");
+  const list=events.map(e=>({s:e.startDate.toJSDate(),e:e.endDate.toJSDate(),t:e.summary,l:e.location}))
+                   .filter(ev=>ev.e>dayStart && ev.s<dayEnd);
+  render(list);
+}
+function detectField(ev){
+  for(const f of FIELDS) if((ev.l||"").includes(f)|| (ev.t||"").includes(f)) return f;
+  return null;
+}
+function render(evts){
+  const byField={};FIELDS.forEach(f=>byField[f]=[]);
+  evts.forEach(ev=>{const f=detectField(ev);if(f)byField[f].push(ev);});
+  let html="<thead><tr><th class='time-col'>Time</th>"+FIELDS.map(f=>"<th>"+f+"</th>").join("")+"</tr></thead><tbody>";
+  for(let h=START_HOUR;h<=END_HOUR;h++){
+    const slotStart=new Date(currentDay);slotStart.setHours(h,0,0,0);
+    const slotEnd=new Date(currentDay);slotEnd.setHours(h+1,0,0,0);
+    html+="<tr><th class='time-col'>"+new Intl.DateTimeFormat([], {hour:"numeric"}).format(slotStart)+"</th>";
+    for(const f of FIELDS){
+      const cell=byField[f].filter(ev=>ev.e>slotStart && ev.s<slotEnd)
+        .map(ev=>`<div class="event"><div>${fmtTime(ev.s)}–${fmtTime(ev.e)}</div><div>${ev.t}</div></div>`).join("");
+      html+="<td>"+cell+"</td>";
+    }
+    html+="</tr>";
+  }
+  html+="</tbody>";
+  document.getElementById("grid").innerHTML=html;
+  document.getElementById("status").textContent="Loaded "+evts.length+" events";
+}
+document.getElementById("prev").onclick=()=>{currentDay=addDays(currentDay,-1);document.getElementById("picker").value=toISO(currentDay);load();}
+document.getElementById("next").onclick=()=>{currentDay=addDays(currentDay,1);document.getElementById("picker").value=toISO(currentDay);load();}
+document.getElementById("today").onclick=()=>{currentDay=new Date();document.getElementById("picker").value=toISO(currentDay);load();}
+document.getElementById("picker").onchange=e=>{currentDay=new Date(e.target.value+"T12:00:00");load();}
+document.getElementById("picker").value=toISO(currentDay);
+load();setInterval(load,60000);
+</script>
+</body>
+</html>
