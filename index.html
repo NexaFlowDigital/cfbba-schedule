@@ -1,69 +1,10 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<title>CFBBA Schedule</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-
-<style>
-  :root{--bg:#f6f7fb;--card:#fff;--line:#e6e8ef;--head:#f1f3f8;--muted:#667085;--accent:#3b82f6}
-  *{box-sizing:border-box}
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:#111}
-  header{position:sticky;top:0;z-index:10;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;background:#fff;border-bottom:1px solid var(--line)}
-  button,select,input[type="date"]{padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer}
-  button:hover{background:#fafafa}
-  .wrap{padding:12px}
-  .grid{width:100%;border-collapse:collapse;background:var(--card);box-shadow:0 2px 6px rgba(0,0,0,.06)}
-  .grid th,.grid td{border:1px solid var(--line);vertical-align:top;padding:8px}
-  .grid thead th{background:var(--head);position:sticky;top:58px;z-index:2}
-  .time-col{width:82px;background:#fbfbff;font-weight:700;text-align:center}
-  .event{background:#eef2ff;border-left:4px solid var(--accent);border-radius:8px;margin:5px 0;padding:6px 8px;font-size:13px;line-height:1.25}
-  .event .title{font-weight:700}
-  .muted{color:var(--muted);font-size:12px}
-  .filters{margin-left:auto;display:flex;gap:8px}
-  .badge{display:inline-block;font-size:11px;background:#e5edff;color:#1e40af;border:1px solid #c7d2fe;border-radius:999px;padding:2px 8px;margin-left:6px}
-</style>
-</head>
-<body>
-
-<header>
-  <button id="prevDay">◀ Day</button>
-  <button id="today">Today</button>
-  <button id="nextDay">Day ▶</button>
-  <button id="prevGame">◀ Games</button>
-  <button id="nextGame">Games ▶</button>
-  <input type="date" id="picker" />
-  <div class="filters">
-    <select id="fieldFilter"><option value="">All Fields</option></select>
-    <select id="divisionFilter"><option value="">All Divisions</option></select>
-    <select id="sortMode">
-      <option value="smart">Sort Fields: Complex/Number</option>
-      <option value="alpha">Sort Fields: A→Z</option>
-    </select>
-  </div>
-  <span id="status" class="muted"></span>
-</header>
-
-<div class="wrap">
-  <table id="grid" class="grid"></table>
-</div>
-
 <script>
-/* ========= YOUR GOOGLE API SETTINGS ========= */
-const API_KEY = "AIzaSyDV2OOJwpQyZV-REQtMkxJ2ccI1f3OjGZU";            // your key (restricted to Calendar + your domains)
-const CALENDAR_ID = "aebjkir658ngsng4mav738uiumpjrg5q@import.calendar.google.com"; // <-- paste your Calendar ID
-/* =========================================== */
-
-const START_HOUR = 7;   // 7 AM
-const END_HOUR   = 22;  // 10 PM
-const REFRESH_MS = 60000;
+const PROXY_URL = "https://script.google.com/macros/s/AKfycbzbd9jhsgVHOyXRcyxJ43vOYOizFNXlJtdOXxo4rDbsTlDBxqowZy4V5OGZ1QAxHtQU/exec"; // e.g., https://script.google.com/macros/s/XXXX/exec
+const START_HOUR = 7, END_HOUR = 22, REFRESH_MS = 60000;
 
 let currentDay = new Date();
-let allEvents = [];         // normalized events from Google Calendar
-let gameDates = [];         // ["YYYY-MM-DD", ...]
-let fields = [];            // column headers (friendly field names)
+let allEvents = [], gameDates = [], fields = [];
 
-/* ---------- Utilities ---------- */
 const pad=n=>String(n).padStart(2,"0");
 const localYMD=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const addDays=(d,n)=>{const x=new Date(d); x.setDate(d.getDate()+n); return x;};
@@ -71,24 +12,14 @@ const fmtTime=d=>new Intl.DateTimeFormat([], {hour:"numeric", minute:"2-digit"})
 const uniq=arr=>[...new Set(arr)];
 const nonEmpty=s=>s && String(s).trim().length>0;
 
-/* Extract division tags like 11U, 12U from title/description */
-function detectDivision(txt){
-  const m=(txt||"").match(/\b(\d{2}U)\b/i);
-  return m ? m[1].toUpperCase() : "";
-}
-
-/* Extract a FIELD from Google event.description.
-   Your feed shows "Raymond DeLeon > RDL" → we grab the last segment after '>' */
+function detectDivision(txt){ const m=(txt||"").match(/\b(\d{2}U)\b/i); return m?m[1].toUpperCase():""; }
 function fieldFromDescription(desc){
-  if (!desc) return "";
+  if(!desc) return "";
   const parts = desc.split(">").map(s=>s.trim()).filter(Boolean);
-  if (parts.length) return parts[parts.length-1]; // last piece (e.g., RDL / Mac 12)
-  return "";
+  return parts.length ? parts[parts.length-1] : "";
 }
-
-/* Fallback heuristics if description is missing */
 function guessFieldFromText(title, location){
-  const hay=(title||"") + " | " + (location||"");
+  const hay=(title||"")+" | "+(location||"");
   let m;
   if (/\bpepper\b.*\bnorth\b/i.test(hay)) return "Pepper North";
   if (/\bpepper\b.*\bsouth\b/i.test(hay)) return "Pepper South";
@@ -96,159 +27,109 @@ function guessFieldFromText(title, location){
   if (m=hay.match(/\bmac(arthur)?\b.*\b(\d{1,2})\b/i)) return `Mac ${m[2]}`;
   if (/\brdl\b/i.test(hay)) return "RDL";
   if (/\bjaycee\b/i.test(hay)) return "Jaycee Park";
-  // as last resort, strip address and keep venue label
-  const piece=(location||"").split(",")[0].trim();
-  return piece || "";
+  return (location||"").split(",")[0].trim();
 }
-
-/* Smart sort: group by complex then by number if present */
 function smartSort(a,b){
-  const key = s=>{
-    const m = s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/);
-    return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)];
-  };
+  const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/); return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)]; };
   const ka=key(a), kb=key(b);
-  return ka[0]===kb[0] ? ka[1]-kb[1] : (ka[0] < kb[0] ? -1 : 1);
+  return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1);
 }
 
-/* ---------- Fetch from Google Calendar API ---------- */
 async function fetchEvents(){
-  document.getElementById("status").textContent = "Loading…";
-
-  // Fetch a wide window (past year → next year) so Games ◀/▶ works well
-  const now = new Date();
-  const min = new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
-  const max = new Date(now.getFullYear()+1, now.getMonth(), now.getDate());
-
-  const params = new URLSearchParams({
-    key: API_KEY,
-    singleEvents: "true",
-    orderBy: "startTime",
-    timeMin: min.toISOString(),
-    timeMax: max.toISOString(),
-    maxResults: "2500"
-  });
-  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CALENDAR_ID)}/events?`+params.toString();
-
+  document.getElementById("status").textContent="Loading…";
+  const now=new Date();
+  const min=new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
+  const max=new Date(now.getFullYear()+1, now.getMonth(), now.getDate());
+  const url = `${PROXY_URL}?timeMin=${encodeURIComponent(min.toISOString())}&timeMax=${encodeURIComponent(max.toISOString())}`;
   const res = await fetch(url);
-  if(!res.ok){
-    document.getElementById("status").textContent = "Calendar API error. Check Calendar ID, key, and referrer restrictions.";
-    return;
-  }
+  if(!res.ok){ document.getElementById("status").textContent="Proxy error — check Apps Script deploy & access."; return; }
   const data = await res.json();
 
-  allEvents = (data.items||[])
-    .filter(ev => ev.start && (ev.start.dateTime || ev.start.date))
-    .map(ev => {
-      const start = new Date(ev.start.dateTime || (ev.start.date+"T00:00:00"));
-      const end   = new Date(ev.end?.dateTime || (ev.end?.date ? ev.end.date+"T00:00:00" : ev.start.dateTime));
-      const title = ev.summary || "";
-      const loc   = ev.location || "";
-      const desc  = ev.description || "";
-      const div   = detectDivision(title) || detectDivision(desc);
-      let field   = fieldFromDescription(desc);
-      if (!field) field = guessFieldFromText(title, loc);
-      return { s:start, e:end, t:title, l:loc, desc, div, field };
-    });
+  allEvents = (data.items||[]).map(ev=>{
+    const start=new Date(ev.start), end=new Date(ev.end||ev.start);
+    const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
+    const div = detectDivision(title)||detectDivision(desc);
+    let field = fieldFromDescription(desc);
+    if(!field) field = guessFieldFromText(title, loc);
+    return { s:start, e:end, t:title, l:loc, desc, div, field };
+  });
 
-  // Columns (fields) and game dates
-  fields = uniq(allEvents.map(e=>e.field).filter(nonEmpty));
-  fields.sort(document.getElementById("sortMode").value==="alpha" ? (a,b)=>a.localeCompare(b) : smartSort);
-
+  fields = uniq(allEvents.map(e=>e.field).filter(nonEmpty)).sort(smartSort);
   gameDates = uniq(allEvents.map(e=>localYMD(e.s))).sort();
 
-  populateFilters();
-  render();
-  document.getElementById("status").textContent = `Loaded ${allEvents.length} events • ${fields.length} fields • ${gameDates.length} game days`;
+  populateFilters(); render();
+  document.getElementById("status").textContent=`Loaded ${allEvents.length} events • ${fields.length} fields • ${gameDates.length} game days`;
 }
 
-/* ---------- UI ---------- */
 function populateFilters(){
-  const $f = document.getElementById("fieldFilter");
-  $f.innerHTML = '<option value="">All Fields</option>' + fields.map(f=>`<option>${f}</option>`).join("");
-  const divisions = uniq(allEvents.map(e=>e.div).filter(nonEmpty)).sort();
-  const $d = document.getElementById("divisionFilter");
-  $d.innerHTML = '<option value="">All Divisions</option>' + divisions.map(d=>`<option>${d}</option>`).join("");
+  const $f=document.getElementById("fieldFilter");
+  $f.innerHTML='<option value="">All Fields</option>'+fields.map(f=>`<option>${f}</option>`).join("");
+  const divisions=uniq(allEvents.map(e=>e.div).filter(nonEmpty)).sort();
+  const $d=document.getElementById("divisionFilter");
+  $d.innerHTML='<option value="">All Divisions</option>'+divisions.map(d=>`<option>${d}</option>`).join("");
 }
 
-/* ---------- Render grid ---------- */
 function render(){
-  const iso = localYMD(currentDay);
-  const dayStart = new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(), 0,0,0,0);
-  const dayEnd   = new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(), 23,59,59,999);
+  const iso=localYMD(currentDay);
+  const dayStart=new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(),0,0,0,0);
+  const dayEnd=new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(),23,59,59,999);
 
-  const fieldFilter = document.getElementById("fieldFilter").value;
-  const divFilter   = document.getElementById("divisionFilter").value;
+  const fieldFilter=document.getElementById("fieldFilter").value;
+  const divFilter=document.getElementById("divisionFilter").value;
 
   const dayEvents = allEvents
-    .filter(ev => ev.e > dayStart && ev.s < dayEnd)
-    .filter(ev => !divFilter || ev.div === divFilter)
-    .filter(ev => !fieldFilter || ev.field === fieldFilter);
+    .filter(ev=>ev.e>dayStart && ev.s<dayEnd)
+    .filter(ev=>!divFilter || ev.div===divFilter)
+    .filter(ev=>!fieldFilter || ev.field===fieldFilter);
 
   const cols = fieldFilter ? [fieldFilter] : fields.slice();
-
   const buckets = Object.fromEntries(cols.map(c=>[c,[]]));
-  dayEvents.forEach(ev => { if (buckets[ev.field]) buckets[ev.field].push(ev); });
+  dayEvents.forEach(ev=>{ if(buckets[ev.field]) buckets[ev.field].push(ev); });
 
   const hrs = Array.from({length: END_HOUR-START_HOUR+1}, (_,i)=>START_HOUR+i);
-  let html = "<thead><tr><th class='time-col'>Time</th>";
-  for (const f of cols) html += `<th>${f}</th>`;
-  html += "</tr></thead><tbody>";
-
-  for (const h of hrs){
-    const slotStart = new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(), h, 0, 0, 0);
-    const slotEnd   = new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(), h+1, 0, 0, 0);
-    html += `<tr><th class="time-col">${new Intl.DateTimeFormat([], {hour:"numeric"}).format(slotStart)}</th>`;
-
-    for (const col of cols){
-      const cell = (buckets[col]||[])
-        .filter(ev => ev.e > slotStart && ev.s < slotEnd)
-        .map(ev => `<div class="event" title="${(ev.l||"").replace(/\s+/g," ").trim()}">
-                      <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
-                      <div class="title">${ev.t}</div>
-                      ${ev.div ? `<div class="muted">${ev.div}</div>` : ""}
-                    </div>`).join("");
-      html += `<td>${cell}</td>`;
+  let html = "<thead><tr><th class='time-col'>Time</th>"+cols.map(f=>`<th>${f}</th>`).join("")+"</tr></thead><tbody>";
+  for(const h of hrs){
+    const slotStart=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),h,0,0,0);
+    const slotEnd=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),h+1,0,0,0);
+    html+=`<tr><th class="time-col">${new Intl.DateTimeFormat([], {hour:"numeric"}).format(slotStart)}</th>`;
+    for(const col of cols){
+      const cell=(buckets[col]||[]).filter(ev=>ev.e>slotStart && ev.s<slotEnd)
+        .map(ev=>`<div class="event" title="${(ev.l||"").replace(/\s+/g," ").trim()}">
+                    <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
+                    <div class="title">${ev.t}</div>
+                    ${ev.div?`<div class="muted">${ev.div}</div>`:""}
+                  </div>`).join("");
+      html+=`<td>${cell}</td>`;
     }
-    html += "</tr>";
+    html+="</tr>";
   }
-  html += "</tbody>";
-
-  document.getElementById("grid").innerHTML = html;
-  document.getElementById("status").textContent = `Showing ${iso} • ${dayEvents.length} events`;
+  html+="</tbody>";
+  document.getElementById("grid").innerHTML=html;
+  document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
 
-/* ---------- Navigation ---------- */
 function jumpToGame(next=true){
-  if (!gameDates.length) return;
-  const iso = localYMD(currentDay);
-  if (next){
-    const nxt = gameDates.find(d => d > iso);
-    if (nxt){ currentDay = new Date(nxt+"T12:00:00"); document.getElementById("picker").value = nxt; render(); }
+  if(!gameDates.length) return;
+  const iso=localYMD(currentDay);
+  if(next){
+    const nxt=gameDates.find(d=>d>iso);
+    if(nxt){ currentDay=new Date(nxt+"T12:00:00"); document.getElementById("picker").value=nxt; render(); }
   } else {
-    const prev = [...gameDates].reverse().find(d => d < iso);
-    if (prev){ currentDay = new Date(prev+"T12:00:00"); document.getElementById("picker").value = prev; render(); }
+    const prev=[...gameDates].reverse().find(d=>d<iso);
+    if(prev){ currentDay=new Date(prev+"T12:00:00"); document.getElementById("picker").value=prev; render(); }
   }
 }
 
-/* ---------- Wire up ---------- */
-document.getElementById("picker").value = localYMD(currentDay);
-document.getElementById("prevDay").onclick = ()=>{ currentDay = addDays(currentDay,-1); document.getElementById("picker").value = localYMD(currentDay); render(); };
-document.getElementById("nextDay").onclick = ()=>{ currentDay = addDays(currentDay, 1); document.getElementById("picker").value = localYMD(currentDay); render(); };
-document.getElementById("today").onclick   = ()=>{ currentDay = new Date();           document.getElementById("picker").value = localYMD(currentDay); render(); };
-document.getElementById("prevGame").onclick= ()=> jumpToGame(false);
-document.getElementById("nextGame").onclick= ()=> jumpToGame(true);
-document.getElementById("picker").onchange = e=>{ currentDay = new Date(e.target.value+"T12:00:00"); render(); };
-document.getElementById("fieldFilter").onchange = render;
-document.getElementById("divisionFilter").onchange = render;
-document.getElementById("sortMode").onchange = ()=>{ 
-  fields.sort(document.getElementById("sortMode").value==="alpha" ? (a,b)=>a.localeCompare(b) : smartSort);
-  populateFilters(); render();
-};
+document.getElementById("picker").value=localYMD(currentDay);
+document.getElementById("prevDay").onclick=()=>{ currentDay=addDays(currentDay,-1); document.getElementById("picker").value=localYMD(currentDay); render(); };
+document.getElementById("nextDay").onclick=()=>{ currentDay=addDays(currentDay, 1); document.getElementById("picker").value=localYMD(currentDay); render(); };
+document.getElementById("today").onclick  =()=>{ currentDay=new Date();           document.getElementById("picker").value=localYMD(currentDay); render(); };
+document.getElementById("prevGame").onclick=()=>jumpToGame(false);
+document.getElementById("nextGame").onclick=()=>jumpToGame(true);
+document.getElementById("picker").onchange=e=>{ currentDay=new Date(e.target.value+"T12:00:00"); render(); };
+document.getElementById("fieldFilter").onchange=render;
+document.getElementById("divisionFilter").onchange=render;
 
-/* ---------- Init ---------- */
 fetchEvents();
 setInterval(fetchEvents, REFRESH_MS);
 </script>
-</body>
-</html>
