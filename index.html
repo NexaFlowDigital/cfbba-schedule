@@ -1,10 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>CFBBA Schedule</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root{--bg:#f6f7fb;--card:#fff;--line:#e6e8ef;--head:#f1f3f8;--muted:#667085;--accent:#3b82f6}
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:#111}
+  header{position:sticky;top:0;z-index:10;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;background:#fff;border-bottom:1px solid var(--line)}
+  button,select,input[type="date"]{padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer}
+  button:hover{background:#fafafa}
+  .wrap{padding:12px}
+  .grid{width:100%;border-collapse:collapse;background:var(--card);box-shadow:0 2px 6px rgba(0,0,0,.06)}
+  .grid th,.grid td{border:1px solid var(--line);vertical-align:top;padding:8px}
+  .grid thead th{background:var(--head);position:sticky;top:58px;z-index:2}
+  .time-col{width:82px;background:#fbfbff;font-weight:700;text-align:center}
+  .event{background:#eef2ff;border-left:4px solid var(--accent);border-radius:8px;margin:5px 0;padding:6px 8px;font-size:13px;line-height:1.25}
+  .event .title{font-weight:700}
+  .muted{color:var(--muted);font-size:12px}
+  .filters{margin-left:auto;display:flex;gap:8px}
+  .error{background:#fff3f3;border:1px solid #f5c2c7;color:#842029;padding:8px 10px;border-radius:8px;margin:8px 12px}
+</style>
+</head>
+<body>
+
+<header>
+  <button id="prevDay">◀ Day</button>
+  <button id="today">Today</button>
+  <button id="nextDay">Day ▶</button>
+  <button id="prevGame">◀ Games</button>
+  <button id="nextGame">Games ▶</button>
+  <input type="date" id="picker" />
+  <div class="filters">
+    <select id="fieldFilter"><option value="">All Fields</option></select>
+    <select id="divisionFilter"><option value="">All Divisions</option></select>
+  </div>
+  <span id="status" class="muted">Loading…</span>
+</header>
+
+<div id="err" class="error" style="display:none"></div>
+
+<div class="wrap">
+  <table id="grid" class="grid"></table>
+</div>
+
 <script>
-const PROXY_URL = "https://script.google.com/macros/s/AKfycbzbd9jhsgVHOyXRcyxJ43vOYOizFNXlJtdOXxo4rDbsTlDBxqowZy4V5OGZ1QAxHtQU/exec"; // e.g., https://script.google.com/macros/s/XXXX/exec
+/* ====== CONFIG: your Apps Script proxy url ====== */
+const PROXY_URL = "https://script.google.com/macros/s/AKfycbzbd9jhsgVHOyXRcyxJ43vOYOizFNXlJtdOXxo4rDbsTlDBxqowZy4V5OGZ1QAxHtQU/exec";
 const START_HOUR = 7, END_HOUR = 22, REFRESH_MS = 60000;
 
+/* ====== State ====== */
 let currentDay = new Date();
 let allEvents = [], gameDates = [], fields = [];
 
+/* ====== Utils ====== */
 const pad=n=>String(n).padStart(2,"0");
 const localYMD=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const addDays=(d,n)=>{const x=new Date(d); x.setDate(d.getDate()+n); return x;};
@@ -12,12 +62,31 @@ const fmtTime=d=>new Intl.DateTimeFormat([], {hour:"numeric", minute:"2-digit"})
 const uniq=arr=>[...new Set(arr)];
 const nonEmpty=s=>s && String(s).trim().length>0;
 
-function detectDivision(txt){ const m=(txt||"").match(/\b(\d{2}U)\b/i); return m?m[1].toUpperCase():""; }
+function showError(msg){
+  const box=document.getElementById("err");
+  box.style.display="block";
+  box.textContent=msg;
+}
+function clearError(){
+  const box=document.getElementById("err");
+  box.style.display="none";
+  box.textContent="";
+}
+
+/* Division tags like 10U, 12U */
+function detectDivision(txt){
+  const m=(txt||"").match(/\b(\d{2}U)\b/i);
+  return m ? m[1].toUpperCase() : "";
+}
+
+/* Field from description: e.g., "Raymond DeLeon > RDL" → "RDL" */
 function fieldFromDescription(desc){
   if(!desc) return "";
   const parts = desc.split(">").map(s=>s.trim()).filter(Boolean);
   return parts.length ? parts[parts.length-1] : "";
 }
+
+/* Fallback heuristics if description missing */
 function guessFieldFromText(title, location){
   const hay=(title||"")+" | "+(location||"");
   let m;
@@ -29,38 +98,65 @@ function guessFieldFromText(title, location){
   if (/\bjaycee\b/i.test(hay)) return "Jaycee Park";
   return (location||"").split(",")[0].trim();
 }
+
+/* Smart sort fields by complex, then number */
 function smartSort(a,b){
   const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/); return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)]; };
   const ka=key(a), kb=key(b);
   return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1);
 }
 
+/* ====== Fetch from proxy ====== */
 async function fetchEvents(){
-  document.getElementById("status").textContent="Loading…";
-  const now=new Date();
-  const min=new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
-  const max=new Date(now.getFullYear()+1, now.getMonth(), now.getDate());
-  const url = `${PROXY_URL}?timeMin=${encodeURIComponent(min.toISOString())}&timeMax=${encodeURIComponent(max.toISOString())}`;
-  const res = await fetch(url);
-  if(!res.ok){ document.getElementById("status").textContent="Proxy error — check Apps Script deploy & access."; return; }
-  const data = await res.json();
+  clearError();
+  const statusEl=document.getElementById("status");
+  statusEl.textContent="Loading…";
 
-  allEvents = (data.items||[]).map(ev=>{
-    const start=new Date(ev.start), end=new Date(ev.end||ev.start);
-    const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
-    const div = detectDivision(title)||detectDivision(desc);
-    let field = fieldFromDescription(desc);
-    if(!field) field = guessFieldFromText(title, loc);
-    return { s:start, e:end, t:title, l:loc, desc, div, field };
-  });
+  try{
+    const now=new Date();
+    const min=new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
+    const max=new Date(now.getFullYear()+1, now.getMonth(), now.getDate());
 
-  fields = uniq(allEvents.map(e=>e.field).filter(nonEmpty)).sort(smartSort);
-  gameDates = uniq(allEvents.map(e=>localYMD(e.s))).sort();
+    const url = `${PROXY_URL}?timeMin=${encodeURIComponent(min.toISOString())}&timeMax=${encodeURIComponent(max.toISOString())}`;
+    const res = await fetch(url);
+    if(!res.ok){
+      showError(`Proxy error (${res.status}). Make sure the Apps Script web app access is "Anyone with the link" and you used the /exec URL.`);
+      statusEl.textContent="Proxy error.";
+      return;
+    }
+    const data = await res.json();
+    if(!data || !Array.isArray(data.items)){
+      showError("Proxy returned unexpected data. It should be { items: [...] }.");
+      statusEl.textContent="Bad data.";
+      return;
+    }
 
-  populateFilters(); render();
-  document.getElementById("status").textContent=`Loaded ${allEvents.length} events • ${fields.length} fields • ${gameDates.length} game days`;
+    allEvents = data.items.map(ev=>{
+      const start = ev.start ? new Date(ev.start) : null;
+      const end   = ev.end   ? new Date(ev.end)   : start;
+      const title = ev.title || "";
+      const loc   = ev.location || "";
+      const desc  = ev.description || "";
+      const div   = detectDivision(title) || detectDivision(desc);
+      let field   = fieldFromDescription(desc);
+      if(!field) field = guessFieldFromText(title, loc);
+      return { s:start, e:end, t:title, l:loc, desc, div, field };
+    }).filter(e=>e.s && e.e);
+
+    fields = uniq(allEvents.map(e=>e.field).filter(nonEmpty)).sort(smartSort);
+    gameDates = uniq(allEvents.map(e=>localYMD(e.s))).sort();
+
+    populateFilters();
+    render();
+    statusEl.textContent=`Loaded ${allEvents.length} events • ${fields.length} fields • ${gameDates.length} game days`;
+  }catch(err){
+    console.error(err);
+    showError("JavaScript error: "+err.message);
+    statusEl.textContent="Error.";
+  }
 }
 
+/* ====== UI ====== */
 function populateFilters(){
   const $f=document.getElementById("fieldFilter");
   $f.innerHTML='<option value="">All Fields</option>'+fields.map(f=>`<option>${f}</option>`).join("");
@@ -108,6 +204,7 @@ function render(){
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
 
+/* ====== Navigation ====== */
 function jumpToGame(next=true){
   if(!gameDates.length) return;
   const iso=localYMD(currentDay);
@@ -120,16 +217,20 @@ function jumpToGame(next=true){
   }
 }
 
+/* ====== Wire up ====== */
 document.getElementById("picker").value=localYMD(currentDay);
 document.getElementById("prevDay").onclick=()=>{ currentDay=addDays(currentDay,-1); document.getElementById("picker").value=localYMD(currentDay); render(); };
 document.getElementById("nextDay").onclick=()=>{ currentDay=addDays(currentDay, 1); document.getElementById("picker").value=localYMD(currentDay); render(); };
 document.getElementById("today").onclick  =()=>{ currentDay=new Date();           document.getElementById("picker").value=localYMD(currentDay); render(); };
 document.getElementById("prevGame").onclick=()=>jumpToGame(false);
 document.getElementById("nextGame").onclick=()=>jumpToGame(true);
-document.getElementById("picker").onchange=e=>{ currentDay=new Date(e.target.value+"T12:00:00"); render(); };
 document.getElementById("fieldFilter").onchange=render;
 document.getElementById("divisionFilter").onchange=render;
+document.getElementById("picker").onchange=e=>{ currentDay=new Date(e.target.value+"T12:00:00"); render(); };
 
+/* ====== Init ====== */
 fetchEvents();
 setInterval(fetchEvents, REFRESH_MS);
 </script>
+</body>
+</html>
