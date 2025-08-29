@@ -46,12 +46,15 @@
 </div>
 
 <script>
+/* ====== CONFIG: your Apps Script proxy url ====== */
 const PROXY_URL = "https://script.google.com/macros/s/AKfycbyTefl2bCI4olcyFEDcLQOXkDppLiUIhoyme5TYRExONLx47F8TmyaQhw1AwRUvsQoO/exec";
 const START_HOUR = 7, END_HOUR = 22, REFRESH_MS = 60000;
 
+/* ====== State ====== */
 let currentDay = new Date();
 let allEvents = [], gameDates = [], fields = [];
 
+/* ====== Utils ====== */
 const pad=n=>String(n).padStart(2,"0");
 const localYMD=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const addDays=(d,n)=>{const x=new Date(d); x.setDate(d.getDate()+n); return x;};
@@ -111,43 +114,64 @@ function populateFilters(){
 
 function render(){
   const iso=localYMD(currentDay);
-  const dayStart=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),0,0,0,0);
-  const dayEnd=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),23,59,59,999);
   const fieldFilter=document.getElementById("fieldFilter").value;
   const divFilter=document.getElementById("divisionFilter").value;
+
+  const dayStart=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),0,0,0,0);
+  const dayEnd=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),23,59,59,999);
   const dayEvents=allEvents.filter(ev=>ev.e>dayStart&&ev.s<dayEnd).filter(ev=>!divFilter||ev.div===divFilter).filter(ev=>!fieldFilter||ev.field===fieldFilter);
+
   const cols=fieldFilter?[fieldFilter]:fields.slice();
   const byField=Object.fromEntries(cols.map(c=>[c,[]]));dayEvents.forEach(ev=>{if(byField[ev.field])byField[ev.field].push(ev);});
   cols.forEach(f=>byField[f].sort((a,b)=>a.s-b.s));
-  const hourMs=60*60*1000;const hours=Array.from({length:END_HOUR-START_HOUR},(_,i)=>START_HOUR+i);
+
+  const hourMs=60*60*1000;
+  const hours=Array.from({length:END_HOUR-START_HOUR},(_,i)=>START_HOUR+i);
   const skipUntil=Object.fromEntries(cols.map(c=>[c,-1]));
+
   let html="<thead><tr><th class='time-col'>Time</th>"+cols.map(f=>`<th>${f}</th>`).join("")+"</tr></thead><tbody>";
+
   for(let hi=0;hi<hours.length;hi++){
-    const h=hours[hi];const slotStart=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),h,0,0,0);
+    const h=hours[hi];
+    const slotStart=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),h,0,0,0);
     html+=`<tr><th class="time-col">${new Intl.DateTimeFormat([], {hour:"numeric"}).format(slotStart)}</th>`;
     for(const col of cols){
       if(skipUntil[col]>hi)continue;
+
       const startingHere=(byField[col]||[]).filter(ev=>ev.s>=slotStart&&ev.s<new Date(slotStart.getTime()+hourMs));
       if(startingHere.length===0){html+="<td></td>";continue;}
-      const maxSpan=startingHere.reduce((span,ev)=>{const spanSlots=Math.ceil((ev.e-slotStart)/hourMs);return Math.max(span,Math.max(1,spanSlots));},1);
+
+      // Calculate rowspan based on event end time
+      const maxSpan=startingHere.reduce((span,ev)=>{
+        const spanSlots=Math.ceil((ev.e - ev.s)/hourMs); // use event's actual start
+        return Math.max(span,Math.max(1,spanSlots));
+      },1);
       const rowspan=Math.min(maxSpan,hours.length-hi);
+
       const cellHTML=startingHere.map(ev=>`
         <div class="event" title="${(ev.l||"").replace(/\s+/g," ").trim()}">
           <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
           <div class="title">${ev.t}</div>
           ${ev.div?`<div class="muted">${ev.div}</div>`:""}
         </div>`).join("");
+
       html+=`<td rowspan="${rowspan}">${cellHTML}</td>`;
       skipUntil[col]=hi+rowspan;
     }
     html+="</tr>";
   }
+
   html+="</tbody>";
   document.getElementById("grid").innerHTML=html;
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
 
-function jumpToGame(next=true){if(!gameDates.length)return;const iso=localYMD(currentDay);if(next){const nxt=gameDates.find(d=>d>iso);if(nxt){currentDay=new Date(nxt+"T12:00:00");document.getElementById("picker").value=nxt;render();}}else{const prev=[...gameDates].reverse().find(d=>d<iso);if(prev){currentDay=new Date(prev+"T12:00:00");document.getElementById("picker").value=prev;render();}}}
+function jumpToGame(next=true){
+  if(!gameDates.length)return;
+  const iso=localYMD(currentDay);
+  if(next){const nxt=gameDates.find(d=>d>iso);if(nxt){currentDay=new Date(nxt+"T12:00:00");document.getElementById("picker").value=nxt;render();}}
+  else{const prev=[...gameDates].reverse().find(d=>d<iso);if(prev){currentDay=new Date(prev+"T12:00:00");document.getElementById("picker").value=prev;render();}}
+}
 
 document.getElementById("picker").value=localYMD(currentDay);
 document.getElementById("prevDay").onclick=()=>{currentDay=addDays(currentDay,-1);document.getElementById("picker").value=localYMD(currentDay);render();};
