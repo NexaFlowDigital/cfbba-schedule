@@ -8,19 +8,36 @@
   :root{--bg:#f6f7fb;--card:#fff;--line:#e6e8ef;--head:#f1f3f8;--muted:#667085;--accent:#3b82f6}
   *{box-sizing:border-box}
   body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:#111}
-  header{position:sticky;top:0;z-index:10;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;background:#fff;border-bottom:1px solid var(--line)}
+
+  header{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;background:#fff;border-bottom:1px solid var(--line)}
   button,select,input[type="date"]{padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer}
   button:hover{background:#fafafa}
-  .wrap{padding:12px}
-  .grid{width:100%;border-collapse:collapse;background:var(--card);box-shadow:0 2px 6px rgba(0,0,0,.06)}
-  .grid th,.grid td{border:1px solid var(--line);vertical-align:top;padding:8px}
-  .grid thead th{background:var(--head);position:sticky;top:58px;z-index:2}
-  .time-col{width:82px;background:#fbfbff;font-weight:700;text-align:center}
-  .event{background:#eef2ff;border-left:4px solid var(--accent);border-radius:8px;margin:5px 0;padding:6px 8px;font-size:13px;line-height:1.25}
-  .event .title{font-weight:700}
-  .muted{color:var(--muted);font-size:12px}
   .filters{margin-left:auto;display:flex;gap:8px}
-  .error{background:#fff3f3;border:1px solid #f5c2c7;color:#842029;padding:8px 10px;border-radius:8px;margin:8px 12px}
+  .muted{color:var(--muted);font-size:12px}
+
+  .wrap{padding:12px}
+  .error{background:#fff3f3;border:1px solid #f5c2c7;color:#842029;padding:8px 10px;border-radius:8px;margin:8px 12px;display:none}
+
+  /* Grid header */
+  .sched{background:var(--card);border:1px solid var(--line);box-shadow:0 2px 6px rgba(0,0,0,.06)}
+  .head{position:sticky;top:54px;z-index:10;display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;border-bottom:1px solid var(--line);background:var(--head)}
+  .head .timeHead{width:82px;min-width:82px;max-width:82px;display:flex;align-items:center;justify-content:center;font-weight:700;border-right:1px solid var(--line);background:#fbfbff}
+  .head .colHead{padding:10px 8px;border-right:1px solid var(--line);font-weight:700;white-space:nowrap}
+
+  /* Body: time rail + field columns */
+  .body{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;overflow-x:auto}
+  .timeRail{width:82px;min-width:82px;max-width:82px;border-right:1px solid var(--line);position:relative;background:#fbfbff}
+  .timeTick{position:absolute;left:0;right:0;height:0;border-top:1px solid var(--line)}
+  .timeLabel{position:absolute;left:8px;transform:translateY(-50%);font-weight:700}
+
+  .col{position:relative;border-right:1px solid var(--line);background:
+    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hourPx) - 1px), rgba(0,0,0,0.05) calc(var(--hourPx) - 1px), rgba(0,0,0,0.05) var(--hourPx));
+  }
+  .event{position:absolute;left:0;right:6px;background:#eef2ff;border-left:4px solid var(--accent);border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden}
+  .event .title{font-weight:700}
+
+  /* Overlap: we shrink width and add horizontal gap when multiple events overlap in a field */
+  .event[data-level]{right:auto}
 </style>
 </head>
 <body>
@@ -39,16 +56,22 @@
   <span id="status" class="muted">Loading…</span>
 </header>
 
-<div id="err" class="error" style="display:none"></div>
+<div id="err" class="error"></div>
 
 <div class="wrap">
-  <table id="grid" class="grid"></table>
+  <div id="sched" class="sched">
+    <div id="head" class="head"></div>
+    <div id="body" class="body" style="--hourPx: 60px"></div>
+  </div>
 </div>
 
 <script>
-/* ====== CONFIG: your Apps Script proxy url ====== */
+/* ====== Config (proxy URL included) ====== */
 const PROXY_URL = "https://script.google.com/macros/s/AKfycbyTefl2bCI4olcyFEDcLQOXkDppLiUIhoyme5TYRExONLx47F8TmyaQhw1AwRUvsQoO/exec";
-const START_HOUR = 7, END_HOUR = 22, REFRESH_MS = 60000;
+const START_HOUR = 7;   // first hour shown
+const END_HOUR   = 22;  // last hour shown
+const PX_PER_MIN = 60/1; // 60px per hour -> 1px per minute
+const REFRESH_MS = 60000;
 
 /* ====== State ====== */
 let currentDay = new Date();
@@ -61,14 +84,13 @@ const addDays=(d,n)=>{const x=new Date(d); x.setDate(d.getDate()+n); return x;};
 const fmtTime=d=>new Intl.DateTimeFormat([], {hour:"numeric", minute:"2-digit"}).format(d);
 const uniq=arr=>[...new Set(arr)];
 const nonEmpty=s=>s && String(s).trim().length>0;
+function showError(msg){ const box=document.getElementById("err"); box.style.display="block"; box.textContent=msg; }
+function clearError(){ const box=document.getElementById("err"); box.style.display="none"; box.textContent=""; }
 
-function showError(msg){const box=document.getElementById("err");box.style.display="block";box.textContent=msg;}
-function clearError(){const box=document.getElementById("err");box.style.display="none";box.textContent="";}
-
-function detectDivision(txt){const m=(txt||"").match(/\b(\d{2}U)\b/i);return m?m[1].toUpperCase():"";}
-function fieldFromDescription(desc){if(!desc) return "";const parts=desc.split(">").map(s=>s.trim()).filter(Boolean);return parts.length?parts[parts.length-1]:"";}
+function detectDivision(txt){ const m=(txt||"").match(/\b(\d{2}U)\b/i); return m?m[1].toUpperCase():""; }
+function fieldFromDescription(desc){ if(!desc) return ""; const parts=desc.split(">").map(s=>s.trim()).filter(Boolean); return parts.length?parts[parts.length-1]:""; }
 function guessFieldFromText(title, location){
-  const hay=(title||"")+" | "+(location||"");let m;
+  const hay=(title||"")+" | "+(location||""); let m;
   if (/\bpepper\b.*\bnorth\b/i.test(hay)) return "Pepper North";
   if (/\bpepper\b.*\bsouth\b/i.test(hay)) return "Pepper South";
   if (m=hay.match(/\bmcinnish\b.*\bfield\s*(\d{1,2})\b/i)) return `McInnish Baseball Field ${m[1]}`;
@@ -77,95 +99,161 @@ function guessFieldFromText(title, location){
   if (/\bjaycee\b/i.test(hay)) return "Jaycee Park";
   return (location||"").split(",")[0].trim();
 }
-function smartSort(a,b){const key=s=>{const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/);return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)];};const ka=key(a), kb=key(b);return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1);}
+function smartSort(a,b){ const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/); return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)]; }; const ka=key(a), kb=key(b); return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1); }
 
+/* ====== Fetch from proxy ====== */
 async function fetchEvents(){
-  clearError();const statusEl=document.getElementById("status");statusEl.textContent="Loading…";
+  clearError(); const statusEl=document.getElementById("status"); statusEl.textContent="Loading…";
   try{
     const now=new Date();
     const min=new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
     const max=new Date(now.getFullYear()+1, now.getMonth(), now.getDate());
-    const url=`${PROXY_URL}?timeMin=${encodeURIComponent(min.toISOString())}&timeMax=${encodeURIComponent(max.toISOString())}`;
-    const res=await fetch(url);
-    if(!res.ok){showError(`Proxy error (${res.status}).`);statusEl.textContent="Proxy error.";return;}
-    const data=await res.json();
-    if(!data||!Array.isArray(data.items)){showError("Proxy returned unexpected data.");statusEl.textContent="Bad data.";return;}
-    allEvents=data.items.map(ev=>{
+    const url = `${PROXY_URL}?timeMin=${encodeURIComponent(min.toISOString())}&timeMax=${encodeURIComponent(max.toISOString())}`;
+    const res = await fetch(url);
+    if(!res.ok){ showError(`Proxy error (${res.status}).`); statusEl.textContent="Proxy error."; return; }
+    const data = await res.json();
+    if(!data || !Array.isArray(data.items)){ showError("Proxy returned unexpected data."); statusEl.textContent="Bad data."; return; }
+
+    allEvents = data.items.map(ev=>{
       const start=ev.start?new Date(ev.start):null;
-      const end=ev.end?new Date(ev.end):start;
+      const end  =ev.end?new Date(ev.end):start;
       const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
-      const div=detectDivision(title)||detectDivision(desc);
-      let field=fieldFromDescription(desc);
-      if(!field) field=guessFieldFromText(title,loc);
-      return {s:start,e:end,t:title,l:loc,desc,div,field};
-    }).filter(e=>e.s&&e.e);
-    fields=uniq(allEvents.map(e=>e.field).filter(nonEmpty)).sort(smartSort);
-    gameDates=uniq(allEvents.map(e=>localYMD(e.s))).sort();
-    populateFilters();render();
+      const div  =detectDivision(title)||detectDivision(desc);
+      let field  =fieldFromDescription(desc);
+      if(!field) field = guessFieldFromText(title, loc);
+      return { s:start, e:end, t:title, l:loc, desc, div, field };
+    }).filter(e=>e.s && e.e);
+
+    fields = uniq(allEvents.map(e=>e.field).filter(nonEmpty)).sort(smartSort);
+    gameDates = uniq(allEvents.map(e=>localYMD(e.s))).sort();
+
+    populateFilters();
+    render();
     statusEl.textContent=`Loaded ${allEvents.length} events • ${fields.length} fields • ${gameDates.length} game days`;
-  }catch(err){console.error(err);showError("JavaScript error: "+err.message);statusEl.textContent="Error.";}
+  }catch(err){ console.error(err); showError("JavaScript error: "+err.message); document.getElementById("status").textContent="Error."; }
 }
 
+/* ====== UI ====== */
 function populateFilters(){
-  const $f=document.getElementById("fieldFilter");$f.innerHTML='<option value="">All Fields</option>'+fields.map(f=>`<option>${f}</option>`).join("");
+  const $f=document.getElementById("fieldFilter");
+  $f.innerHTML='<option value="">All Fields</option>'+fields.map(f=>`<option>${f}</option>`).join("");
   const divisions=uniq(allEvents.map(e=>e.div).filter(nonEmpty)).sort();
-  const $d=document.getElementById("divisionFilter");$d.innerHTML='<option value="">All Divisions</option>'+divisions.map(d=>`<option>${d}</option>`).join("");
+  const $d=document.getElementById("divisionFilter");
+  $d.innerHTML='<option value="">All Divisions</option>'+divisions.map(d=>`<option>${d}</option>`).join("");
 }
 
+/* ====== Overlap layout helper per field ====== */
+function layoutLevels(events){
+  // Greedy interval graph coloring
+  const levels=[]; // array of endTimes per level
+  const out=[];
+  events.sort((a,b)=>a.s-b.s).forEach(ev=>{
+    let level=0;
+    while(level<levels.length && ev.s < levels[level]) level++;
+    levels[level]=ev.e;
+    out.push({ev, level});
+  });
+  return { placed: out, levelCount: levels.length };
+}
+
+/* ====== Render (absolute positioning by minutes) ====== */
 function render(){
   const iso=localYMD(currentDay);
   const fieldFilter=document.getElementById("fieldFilter").value;
   const divFilter=document.getElementById("divisionFilter").value;
 
-  const dayStart=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),0,0,0,0);
-  const dayEnd=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),23,59,59,999);
-  const dayEvents=allEvents.filter(ev=>ev.e>dayStart&&ev.s<dayEnd).filter(ev=>!divFilter||ev.div===divFilter).filter(ev=>!fieldFilter||ev.field===fieldFilter);
+  const dayStart=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),START_HOUR,0,0,0);
+  const dayEnd  =new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),END_HOUR,0,0,0);
+  const totalMin=(END_HOUR-START_HOUR)*60;
 
-  const cols=fieldFilter?[fieldFilter]:fields.slice();
-  const byField=Object.fromEntries(cols.map(c=>[c,[]]));dayEvents.forEach(ev=>{if(byField[ev.field])byField[ev.field].push(ev);});
-  cols.forEach(f=>byField[f].sort((a,b)=>a.s-b.s));
+  const dayEvents = allEvents
+    .filter(ev => ev.e > new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),0,0,0) &&
+                  ev.s < new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),23,59,59,999))
+    .filter(ev => !divFilter || ev.div===divFilter)
+    .filter(ev => !fieldFilter || ev.field===fieldFilter);
 
-  const hourMs=60*60*1000;
-  const hours=Array.from({length:END_HOUR-START_HOUR},(_,i)=>START_HOUR+i);
-  const skipUntil=Object.fromEntries(cols.map(c=>[c,-1]));
+  const cols = fieldFilter ? [fieldFilter] : fields.slice();
 
-  let html="<thead><tr><th class='time-col'>Time</th>"+cols.map(f=>`<th>${f}</th>`).join("")+"</tr></thead><tbody>";
+  // Header
+  const head=document.getElementById("head");
+  head.innerHTML = `<div class="timeHead">Time</div>` + cols.map(f=>`<div class="colHead">${f}</div>`).join("");
 
-  for(let hi=0;hi<hours.length;hi++){
-    const h=hours[hi];
-    const slotStart=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),h,0,0,0);
-    html+=`<tr><th class="time-col">${new Intl.DateTimeFormat([], {hour:"numeric"}).format(slotStart)}</th>`;
-    for(const col of cols){
-      if(skipUntil[col]>hi)continue;
+  // Body
+  const body=document.getElementById("body");
+  body.style.setProperty('--hourPx', (PX_PER_MIN*60)+'px');
+  body.innerHTML = ""; // reset
 
-      const startingHere=(byField[col]||[]).filter(ev=>ev.s>=slotStart&&ev.s<new Date(slotStart.getTime()+hourMs));
-      if(startingHere.length===0){html+="<td></td>";continue;}
+  // Time rail
+  const rail=document.createElement('div');
+  rail.className="timeRail";
+  rail.style.height = (PX_PER_MIN*totalMin) + "px";
+  for(let h=START_HOUR; h<=END_HOUR; h++){
+    const y = (h-START_HOUR)*60*PX_PER_MIN;
+    const line=document.createElement('div');
+    line.className='timeTick';
+    line.style.top = y+'px';
+    rail.appendChild(line);
 
-      // Calculate rowspan based on event end time
-      const maxSpan=startingHere.reduce((span,ev)=>{
-        const spanSlots=Math.ceil((ev.e - ev.s)/hourMs); // use event's actual start
-        return Math.max(span,Math.max(1,spanSlots));
-      },1);
-      const rowspan=Math.min(maxSpan,hours.length-hi);
-
-      const cellHTML=startingHere.map(ev=>`
-        <div class="event" title="${(ev.l||"").replace(/\s+/g," ").trim()}">
-          <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
-          <div class="title">${ev.t}</div>
-          ${ev.div?`<div class="muted">${ev.div}</div>`:""}
-        </div>`).join("");
-
-      html+=`<td rowspan="${rowspan}">${cellHTML}</td>`;
-      skipUntil[col]=hi+rowspan;
+    if(h<END_HOUR){
+      const label=document.createElement('div');
+      label.className='timeLabel';
+      label.style.top=(y)+'px';
+      const dt=new Date(2000,0,1,h,0,0);
+      label.textContent=new Intl.DateTimeFormat([], {hour:'numeric'}).format(dt);
+      rail.appendChild(label);
     }
-    html+="</tr>";
   }
+  body.appendChild(rail);
 
-  html+="</tbody>";
-  document.getElementById("grid").innerHTML=html;
+  // Columns
+  cols.forEach(field=>{
+    const col=document.createElement('div');
+    col.className='col';
+    col.style.height=(PX_PER_MIN*totalMin) + "px";
+
+    // events for this field, clipped to day window
+    const es = dayEvents.filter(e=>e.field===field).map(e=>{
+      const s = new Date(Math.max(e.s, dayStart));
+      const eEnd = new Date(Math.min(e.e, dayEnd));
+      return {...e, s, e:eEnd};
+    }).filter(e=>e.e>e.s);
+
+    // compute overlap levels
+    const { placed, levelCount } = layoutLevels(es);
+
+    placed.forEach(({ev, level})=>{
+      const topMin  = ( (ev.s - dayStart)/60000 );
+      const endMin  = ( (ev.e - dayStart)/60000 );
+      const height  = Math.max(2, (endMin - topMin) * PX_PER_MIN); // min visible height
+      const topPx   = topMin * PX_PER_MIN;
+
+      const gap=4; // px gutter between overlapping columns
+      const widthPct = 100/levelCount;
+      const leftPct  = widthPct*level;
+
+      const node=document.createElement('div');
+      node.className='event';
+      node.style.top = topPx+'px';
+      node.style.height = height+'px';
+      node.style.left = `calc(${leftPct}% + ${gap/2}px)`;
+      node.style.width = `calc(${widthPct}% - ${gap}px)`;
+      node.setAttribute('data-level', level);
+      node.title = (ev.l||"").replace(/\s+/g," ").trim();
+      node.innerHTML = `
+        <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
+        <div class="title">${ev.t}</div>
+        ${ev.div ? `<div class="muted">${ev.div}</div>` : ""}
+      `;
+      col.appendChild(node);
+    });
+
+    body.appendChild(col);
+  });
+
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
 
+/* ====== Navigation ====== */
 function jumpToGame(next=true){
   if(!gameDates.length)return;
   const iso=localYMD(currentDay);
@@ -173,16 +261,18 @@ function jumpToGame(next=true){
   else{const prev=[...gameDates].reverse().find(d=>d<iso);if(prev){currentDay=new Date(prev+"T12:00:00");document.getElementById("picker").value=prev;render();}}
 }
 
+/* ====== Wire up ====== */
 document.getElementById("picker").value=localYMD(currentDay);
-document.getElementById("prevDay").onclick=()=>{currentDay=addDays(currentDay,-1);document.getElementById("picker").value=localYMD(currentDay);render();};
-document.getElementById("nextDay").onclick=()=>{currentDay=addDays(currentDay,1);document.getElementById("picker").value=localYMD(currentDay);render();};
-document.getElementById("today").onclick=()=>{currentDay=new Date();document.getElementById("picker").value=localYMD(currentDay);render();};
-document.getElementById("prevGame").onclick=()=>jumpToGame(false);
-document.getElementById("nextGame").onclick=()=>jumpToGame(true);
+document.getElementById("prevDay").onclick=()=>{ currentDay=addDays(currentDay,-1); document.getElementById("picker").value=localYMD(currentDay); render(); };
+document.getElementById("nextDay").onclick=()=>{ currentDay=addDays(currentDay, 1); document.getElementById("picker").value=localYMD(currentDay); render(); };
+document.getElementById("today").onclick  =()=>{ currentDay=new Date();           document.getElementById("picker").value=localYMD(currentDay); render(); };
+document.getElementById("prevGame").onclick=()=> jumpToGame(false);
+document.getElementById("nextGame").onclick=()=> jumpToGame(true);
 document.getElementById("fieldFilter").onchange=render;
 document.getElementById("divisionFilter").onchange=render;
-document.getElementById("picker").onchange=e=>{currentDay=new Date(e.target.value+"T12:00:00");render();};
+document.getElementById("picker").onchange = e=>{ currentDay=new Date(e.target.value+"T12:00:00"); render(); };
 
+/* ====== Init ====== */
 fetchEvents();
 setInterval(fetchEvents, REFRESH_MS);
 </script>
