@@ -1,3 +1,4 @@
+Cfbba-schedule - Original Code
 <!doctype html>
 <html lang="en">
 <head>
@@ -46,12 +47,15 @@
 </div>
 
 <script>
-const PROXY_URL = "YOUR_EXEC_URL"; // replace with your Apps Script /exec URL
+/* ====== CONFIG: your Apps Script proxy url ====== */
+const PROXY_URL = "https://script.google.com/macros/s/AKfycbyTefl2bCI4olcyFEDcLQOXkDppLiUIhoyme5TYRExONLx47F8TmyaQhw1AwRUvsQoO/exec";
 const START_HOUR = 7, END_HOUR = 22, REFRESH_MS = 60000;
 
+/* ====== State ====== */
 let currentDay = new Date();
 let allEvents = [], gameDates = [], fields = [];
 
+/* ====== Utils ====== */
 const pad=n=>String(n).padStart(2,"0");
 const localYMD=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const addDays=(d,n)=>{const x=new Date(d); x.setDate(d.getDate()+n); return x;};
@@ -59,13 +63,34 @@ const fmtTime=d=>new Intl.DateTimeFormat([], {hour:"numeric", minute:"2-digit"})
 const uniq=arr=>[...new Set(arr)];
 const nonEmpty=s=>s && String(s).trim().length>0;
 
-function showError(msg){const box=document.getElementById("err");box.style.display="block";box.textContent=msg;}
-function clearError(){const box=document.getElementById("err");box.style.display="none";box.textContent="";}
+function showError(msg){
+  const box=document.getElementById("err");
+  box.style.display="block";
+  box.textContent=msg;
+}
+function clearError(){
+  const box=document.getElementById("err");
+  box.style.display="none";
+  box.textContent="";
+}
 
-function detectDivision(txt){const m=(txt||"").match(/\b(\d{2}U)\b/i);return m?m[1].toUpperCase():"";}
-function fieldFromDescription(desc){if(!desc) return "";const parts = desc.split(">").map(s=>s.trim()).filter(Boolean);return parts.length ? parts[parts.length-1] : "";}
+/* Division tags like 10U, 12U */
+function detectDivision(txt){
+  const m=(txt||"").match(/\b(\d{2}U)\b/i);
+  return m ? m[1].toUpperCase() : "";
+}
+
+/* Field from description: e.g., "Raymond DeLeon > RDL" → "RDL" */
+function fieldFromDescription(desc){
+  if(!desc) return "";
+  const parts = desc.split(">").map(s=>s.trim()).filter(Boolean);
+  return parts.length ? parts[parts.length-1] : "";
+}
+
+/* Fallback heuristics if description missing */
 function guessFieldFromText(title, location){
-  const hay=(title||"")+" | "+(location||"");let m;
+  const hay=(title||"")+" | "+(location||"");
+  let m;
   if (/\bpepper\b.*\bnorth\b/i.test(hay)) return "Pepper North";
   if (/\bpepper\b.*\bsouth\b/i.test(hay)) return "Pepper South";
   if (m=hay.match(/\bmcinnish\b.*\bfield\s*(\d{1,2})\b/i)) return `McInnish Baseball Field ${m[1]}`;
@@ -74,19 +99,39 @@ function guessFieldFromText(title, location){
   if (/\bjaycee\b/i.test(hay)) return "Jaycee Park";
   return (location||"").split(",")[0].trim();
 }
-function smartSort(a,b){const key=s=>{const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/);return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)];};const ka=key(a), kb=key(b);return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1);}
 
+/* Smart sort fields by complex, then number */
+function smartSort(a,b){
+  const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/); return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)]; };
+  const ka=key(a), kb=key(b);
+  return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1);
+}
+
+/* ====== Fetch from proxy ====== */
 async function fetchEvents(){
-  clearError();const statusEl=document.getElementById("status");statusEl.textContent="Loading…";
+  clearError();
+  const statusEl=document.getElementById("status");
+  statusEl.textContent="Loading…";
+
   try{
     const now=new Date();
     const min=new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
     const max=new Date(now.getFullYear()+1, now.getMonth(), now.getDate());
+
     const url = `${PROXY_URL}?timeMin=${encodeURIComponent(min.toISOString())}&timeMax=${encodeURIComponent(max.toISOString())}`;
     const res = await fetch(url);
-    if(!res.ok){showError(`Proxy error (${res.status}).`);statusEl.textContent="Proxy error.";return;}
+    if(!res.ok){
+      showError(`Proxy error (${res.status}). Make sure the Apps Script web app access is "Anyone with the link" and you used the /exec URL.`);
+      statusEl.textContent="Proxy error.";
+      return;
+    }
     const data = await res.json();
-    if(!data || !Array.isArray(data.items)){showError("Proxy returned unexpected data.");statusEl.textContent="Bad data.";return;}
+    if(!data || !Array.isArray(data.items)){
+      showError("Proxy returned unexpected data. It should be { items: [...] }.");
+      statusEl.textContent="Bad data.";
+      return;
+    }
+
     allEvents = data.items.map(ev=>{
       const start = ev.start ? new Date(ev.start) : null;
       const end   = ev.end   ? new Date(ev.end)   : start;
@@ -98,47 +143,60 @@ async function fetchEvents(){
       if(!field) field = guessFieldFromText(title, loc);
       return { s:start, e:end, t:title, l:loc, desc, div, field };
     }).filter(e=>e.s && e.e);
+
     fields = uniq(allEvents.map(e=>e.field).filter(nonEmpty)).sort(smartSort);
     gameDates = uniq(allEvents.map(e=>localYMD(e.s))).sort();
-    populateFilters();render();
+
+    populateFilters();
+    render();
     statusEl.textContent=`Loaded ${allEvents.length} events • ${fields.length} fields • ${gameDates.length} game days`;
-  }catch(err){console.error(err);showError("JavaScript error: "+err.message);statusEl.textContent="Error.";}
+  }catch(err){
+    console.error(err);
+    showError("JavaScript error: "+err.message);
+    statusEl.textContent="Error.";
+  }
 }
 
+/* ====== UI ====== */
 function populateFilters(){
-  const $f=document.getElementById("fieldFilter");$f.innerHTML='<option value="">All Fields</option>'+fields.map(f=>`<option>${f}</option>`).join("");
+  const $f=document.getElementById("fieldFilter");
+  $f.innerHTML='<option value="">All Fields</option>'+fields.map(f=>`<option>${f}</option>`).join("");
   const divisions=uniq(allEvents.map(e=>e.div).filter(nonEmpty)).sort();
-  const $d=document.getElementById("divisionFilter");$d.innerHTML='<option value="">All Divisions</option>'+divisions.map(d=>`<option>${d}</option>`).join("");
+  const $d=document.getElementById("divisionFilter");
+  $d.innerHTML='<option value="">All Divisions</option>'+divisions.map(d=>`<option>${d}</option>`).join("");
 }
 
 function render(){
   const iso=localYMD(currentDay);
   const dayStart=new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(),0,0,0,0);
   const dayEnd=new Date(currentDay.getFullYear(), currentDay.getMonth(), currentDay.getDate(),23,59,59,999);
+
   const fieldFilter=document.getElementById("fieldFilter").value;
   const divFilter=document.getElementById("divisionFilter").value;
-  const dayEvents = allEvents.filter(ev=>ev.e>dayStart && ev.s<dayEnd).filter(ev=>!divFilter || ev.div===divFilter).filter(ev=>!fieldFilter || ev.field===fieldFilter);
+
+  const dayEvents = allEvents
+    .filter(ev=>ev.e>dayStart && ev.s<dayEnd)
+    .filter(ev=>!divFilter || ev.div===divFilter)
+    .filter(ev=>!fieldFilter || ev.field===fieldFilter);
+
   const cols = fieldFilter ? [fieldFilter] : fields.slice();
-  const byField = Object.fromEntries(cols.map(c => [c, []]));dayEvents.forEach(ev => { if (byField[ev.field]) byField[ev.field].push(ev); });
-  cols.forEach(f => byField[f].sort((a,b)=>a.s-b.s));
-  const hourMs=60*60*1000;const hours=Array.from({length:END_HOUR-START_HOUR},(_,i)=>START_HOUR+i);
-  const skipUntil = Object.fromEntries(cols.map(c => [c, -1]));
+  const buckets = Object.fromEntries(cols.map(c=>[c,[]]));
+  dayEvents.forEach(ev=>{ if(buckets[ev.field]) buckets[ev.field].push(ev); });
+
+  const hrs = Array.from({length: END_HOUR-START_HOUR+1}, (_,i)=>START_HOUR+i);
   let html = "<thead><tr><th class='time-col'>Time</th>"+cols.map(f=>`<th>${f}</th>`).join("")+"</tr></thead><tbody>";
-  for (let hi=0;hi<hours.length;hi++){const h=hours[hi];const slotStart=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),h,0,0,0);html+=`<tr><th class="time-col">${new Intl.DateTimeFormat([], {hour:"numeric"}).format(slotStart)}</th>`;
-    for (const col of cols){
-      if (skipUntil[col] > hi) continue;
-      const startingHere = (byField[col]||[]).filter(ev => ev.s >= slotStart && ev.s < new Date(slotStart.getTime()+hourMs));
-      if (startingHere.length===0){html += `<td></td>`;continue;}
-      const maxSpan = startingHere.reduce((span, ev) => {const spanSlots=Math.ceil((ev.e-slotStart)/hourMs);return Math.max(span,Math.max(1,spanSlots));},1);
-      const rowspan = Math.min(maxSpan, hours.length-hi);
-      const cellHTML = startingHere.map(ev=>`
-        <div class="event" title="${(ev.l||"").replace(/\s+/g," ").trim()}">
-          <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
-          <div class="title">${ev.t}</div>
-          ${ev.div?`<div class="muted">${ev.div}</div>`:""}
-        </div>`).join("");
-      html += `<td rowspan="${rowspan}">${cellHTML}</td>`;
-      skipUntil[col] = hi + rowspan;
+  for(const h of hrs){
+    const slotStart=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),h,0,0,0);
+    const slotEnd=new Date(currentDay.getFullYear(),currentDay.getMonth(),currentDay.getDate(),h+1,0,0,0);
+    html+=`<tr><th class="time-col">${new Intl.DateTimeFormat([], {hour:"numeric"}).format(slotStart)}</th>`;
+    for(const col of cols){
+      const cell=(buckets[col]||[]).filter(ev=>ev.e>slotStart && ev.s<slotEnd)
+        .map(ev=>`<div class="event" title="${(ev.l||"").replace(/\s+/g," ").trim()}">
+                    <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
+                    <div class="title">${ev.t}</div>
+                    ${ev.div?`<div class="muted">${ev.div}</div>`:""}
+                  </div>`).join("");
+      html+=`<td>${cell}</td>`;
     }
     html+="</tr>";
   }
@@ -147,20 +205,35 @@ function render(){
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
 
-function jumpToGame(next=true){if(!gameDates.length) return;const iso=localYMD(currentDay);if(next){const nxt=gameDates.find(d=>d>iso);if(nxt){currentDay=new Date(nxt+"T12:00:00");document.getElementById("picker").value=nxt;render();}}else{const prev=[...gameDates].reverse().find(d=>d<iso);if(prev){currentDay=new Date(prev+"T12:00:00");document.getElementById("picker").value=prev;render();}}}
+/* ====== Navigation ====== */
+function jumpToGame(next=true){
+  if(!gameDates.length) return;
+  const iso=localYMD(currentDay);
+  if(next){
+    const nxt=gameDates.find(d=>d>iso);
+    if(nxt){ currentDay=new Date(nxt+"T12:00:00"); document.getElementById("picker").value=nxt; render(); }
+  } else {
+    const prev=[...gameDates].reverse().find(d=>d<iso);
+    if(prev){ currentDay=new Date(prev+"T12:00:00"); document.getElementById("picker").value=prev; render(); }
+  }
+}
 
+/* ====== Wire up ====== */
 document.getElementById("picker").value=localYMD(currentDay);
-document.getElementById("prevDay").onclick=()=>{currentDay=addDays(currentDay,-1);document.getElementById("picker").value=localYMD(currentDay);render();};
-document.getElementById("nextDay").onclick=()=>{currentDay=addDays(currentDay,1);document.getElementById("picker").value=localYMD(currentDay);render();};
-document.getElementById("today").onclick=()=>{currentDay=new Date();document.getElementById("picker").value=localYMD(currentDay);render();};
+document.getElementById("prevDay").onclick=()=>{ currentDay=addDays(currentDay,-1); document.getElementById("picker").value=localYMD(currentDay); render(); };
+document.getElementById("nextDay").onclick=()=>{ currentDay=addDays(currentDay, 1); document.getElementById("picker").value=localYMD(currentDay); render(); };
+document.getElementById("today").onclick  =()=>{ currentDay=new Date();           document.getElementById("picker").value=localYMD(currentDay); render(); };
 document.getElementById("prevGame").onclick=()=>jumpToGame(false);
 document.getElementById("nextGame").onclick=()=>jumpToGame(true);
 document.getElementById("fieldFilter").onchange=render;
 document.getElementById("divisionFilter").onchange=render;
-document.getElementById("picker").onchange=e=>{currentDay=new Date(e.target.value+"T12:00:00");render();};
+document.getElementById("picker").onchange=e=>{ currentDay=new Date(e.target.value+"T12:00:00"); render(); };
 
+/* ====== Init ====== */
 fetchEvents();
 setInterval(fetchEvents, REFRESH_MS);
 </script>
 </body>
 </html>
+
+
