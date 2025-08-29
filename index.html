@@ -9,7 +9,7 @@
   *{box-sizing:border-box}
   body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:#111}
 
-  header{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;background:#fff;border-bottom:1px solid var(--line)}
+  header{position:sticky;top:0;z-index:30;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px;background:#fff;border-bottom:1px solid var(--line)}
   button,select,input[type="date"]{padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer}
   button:hover{background:#fafafa}
   .filters{margin-left:auto;display:flex;gap:8px}
@@ -18,38 +18,32 @@
   .wrap{padding:12px}
   .error{background:#fff3f3;border:1px solid #f5c2c7;color:#842029;padding:8px 10px;border-radius:8px;margin:8px 12px;display:none}
 
-  /* Header row */
+  /* Schedule shell */
   .sched{background:var(--card);border:1px solid var(--line);box-shadow:0 2px 6px rgba(0,0,0,.06)}
-  .head{position:sticky;top:54px;z-index:10;display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;border-bottom:1px solid var(--line);background:var(--head)}
-  .head .timeHead{width:82px;min-width:82px;max-width:82px;display:flex;align-items:center;justify-content:center;font-weight:700;border-right:1px solid var(--line);background:#fbfbff}
-  .head .colHead{padding:10px 8px;border-right:1px solid var(--line);font-weight:700;white-space:nowrap}
+  /* Sticky top header (time label + scrolling field headers) */
+  .head{position:sticky;top:54px;z-index:20;display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--head);overflow:hidden}
+  .timeHead{flex:0 0 82px;display:flex;align-items:center;justify-content:center;font-weight:700;border-right:1px solid var(--line);background:#fbfbff;position:sticky;left:0;z-index:25}
+  .headCols{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;will-change:transform}
 
-  /* Body */
-  .body{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;overflow-x:auto}
-  .timeRail{width:82px;min-width:82px;max-width:82px;border-right:1px solid var(--line);position:relative;background:#fbfbff}
+  .colHead{padding:10px 8px;border-right:1px solid var(--line);font-weight:700;white-space:nowrap;background:var(--head)}
+
+  /* Body (horizontal scroll area) */
+  .body{display:flex;align-items:stretch;overflow-x:auto;position:relative}
+  .timeRail{flex:0 0 82px;position:sticky;left:0;z-index:15;border-right:1px solid var(--line);background:#fbfbff}
+  .timeRailInner{position:relative}
   .timeTick{position:absolute;left:0;right:0;height:0;border-top:1px solid var(--line)}
   .timeLabel{position:absolute;left:8px;transform:translateY(-50%);font-weight:700}
 
+  .cols{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;position:relative}
   .col{position:relative;border-right:1px solid var(--line);background:
     repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hourPx) - 1px), rgba(0,0,0,0.05) calc(var(--hourPx) - 1px), rgba(0,0,0,0.05) var(--hourPx));
   }
 
   .event{
-    position:absolute;
-    left:0;
-    right:6px;
-    background:#eef2ff;
-    border-left:4px solid var(--accent);
-    border-radius:10px;
-    padding:6px 8px;
-    font-size:13px;
-    line-height:1.25;
-    overflow:hidden;
-    margin:0;             /* critical: no vertical margin on absolutely positioned blocks */
+    position:absolute;left:0;right:6px;background:#eef2ff;border-left:4px solid var(--accent);
+    border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0
   }
   .event .title{font-weight:700}
-
-  /* Overlap columns */
   .event[data-level]{right:auto}
 </style>
 </head>
@@ -72,9 +66,17 @@
 <div id="err" class="error"></div>
 
 <div class="wrap">
-  <div id="sched" class="sched">
-    <div id="head" class="head"></div>
-    <div id="body" class="body" style="--hourPx: 60px"></div>
+  <div class="sched">
+    <div class="head">
+      <div class="timeHead">Time</div>
+      <div id="headCols" class="headCols"></div>
+    </div>
+    <div id="body" class="body" style="--hourPx:60px">
+      <div class="timeRail">
+        <div id="timeRailInner" class="timeRailInner"></div>
+      </div>
+      <div id="cols" class="cols"></div>
+    </div>
   </div>
 </div>
 
@@ -83,8 +85,7 @@
 const PROXY_URL = "https://script.google.com/macros/s/AKfycbyTefl2bCI4olcyFEDcLQOXkDppLiUIhoyme5TYRExONLx47F8TmyaQhw1AwRUvsQoO/exec";
 const START_HOUR = 7;
 const END_HOUR   = 22;
-/* 1px per minute; 60px per hour for crisp alignment with grid */
-const PX_PER_MIN = 1;
+const PX_PER_MIN = 1;     // 60px per hour (1px per minute)
 const REFRESH_MS = 60000;
 
 /* ====== State ====== */
@@ -156,15 +157,12 @@ function populateFilters(){
   $d.innerHTML='<option value="">All Divisions</option>'+divisions.map(d=>`<option>${d}</option>`).join("");
 }
 
-/* ====== Overlap layout per field (interval graph coloring) ====== */
+/* Overlap layout per field */
 function layoutLevels(events){
-  const levels=[]; // end times per level
-  const placed=[];
+  const levels=[]; const placed=[];
   events.sort((a,b)=>a.s-b.s).forEach(ev=>{
-    let lvl=0;
-    while(lvl<levels.length && ev.s < levels[lvl]) lvl++;
-    levels[lvl]=ev.e;
-    placed.push({ev, level:lvl});
+    let lvl=0; while(lvl<levels.length && ev.s < levels[lvl]) lvl++;
+    levels[lvl]=ev.e; placed.push({ev, level:lvl});
   });
   return { placed, levelCount: Math.max(1, levels.length) };
 }
@@ -186,46 +184,36 @@ function render(){
     .filter(ev => !divFilter || ev.div===divFilter)
     .filter(ev => !fieldFilter || ev.field===fieldFilter);
 
-  const cols = fieldFilter ? [fieldFilter] : fields.slice();
+  const colsList = fieldFilter ? [fieldFilter] : fields.slice();
 
-  // Header
-  const head=document.getElementById("head");
-  head.innerHTML = `<div class="timeHead">Time</div>` + cols.map(f=>`<div class="colHead">${f}</div>`).join("");
+  /* Build sticky header: time + field names (headCols scroll-synced) */
+  const headCols = document.getElementById("headCols");
+  headCols.innerHTML = colsList.map(f=>`<div class="colHead">${f}</div>`).join("");
 
-  // Body
-  const body=document.getElementById("body");
-  body.style.setProperty('--hourPx', (PX_PER_MIN*60)+'px');
-  body.innerHTML = "";
-
-  // Time rail (hour lines & labels)
-  const rail=document.createElement('div');
-  rail.className="timeRail";
-  rail.style.height = (PX_PER_MIN*totalMin) + "px";
+  /* Build time rail ticks/labels */
+  const hourPx = 60*PX_PER_MIN;
+  document.getElementById("body").style.setProperty('--hourPx', hourPx+'px');
+  const railInner=document.getElementById("timeRailInner");
+  railInner.style.height = (PX_PER_MIN*totalMin) + "px";
+  railInner.innerHTML = "";
   for(let h=START_HOUR; h<=END_HOUR; h++){
-    const y = (h-START_HOUR)*60*PX_PER_MIN;
-    const line=document.createElement('div');
-    line.className='timeTick';
-    line.style.top = y+'px';
-    rail.appendChild(line);
-
+    const y=(h-START_HOUR)*hourPx;
+    railInner.insertAdjacentHTML("beforeend", `<div class="timeTick" style="top:${y}px"></div>`);
     if(h<END_HOUR){
-      const label=document.createElement('div');
-      label.className='timeLabel';
-      label.style.top=(y)+'px';
       const dt=new Date(2000,0,1,h,0,0);
-      label.textContent=new Intl.DateTimeFormat([], {hour:'numeric'}).format(dt);
-      rail.appendChild(label);
+      railInner.insertAdjacentHTML("beforeend", `<div class="timeLabel" style="top:${y}px">${new Intl.DateTimeFormat([], {hour:'numeric'}).format(dt)}</div>`);
     }
   }
-  body.appendChild(rail);
 
-  // Columns
-  cols.forEach(field=>{
+  /* Build columns and position events */
+  const cols = document.getElementById("cols");
+  cols.style.gridAutoColumns = 'minmax(140px,1fr)';
+  cols.innerHTML = "";
+  colsList.forEach(field=>{
     const col=document.createElement('div');
     col.className='col';
-    col.style.height=(PX_PER_MIN*totalMin) + "px";
+    col.style.height = (PX_PER_MIN*totalMin) + "px";
 
-    // Clip to visible day window so top/height compute correctly
     const es = dayEvents.filter(e=>e.field===field).map(e=>{
       const s = new Date(Math.max(e.s, dayStart));
       const eEnd = new Date(Math.min(e.e, dayEnd));
@@ -237,13 +225,10 @@ function render(){
     placed.forEach(({ev, level})=>{
       const topMin  = (ev.s - dayStart)/60000;
       const endMin  = (ev.e - dayStart)/60000;
-      // Round positions to the nearest tenth pixel to avoid subpixel rendering drift.
       const topPx   = Math.round(topMin * PX_PER_MIN * 10) / 10;
       const height  = Math.max(2, Math.round((endMin - topMin) * PX_PER_MIN * 10) / 10);
 
-      const gap=4;
-      const widthPct = 100/levelCount;
-      const leftPct  = widthPct*level;
+      const gap=4, widthPct=100/levelCount, leftPct=widthPct*level;
 
       const node=document.createElement('div');
       node.className='event';
@@ -261,8 +246,12 @@ function render(){
       col.appendChild(node);
     });
 
-    body.appendChild(col);
+    cols.appendChild(col);
   });
+
+  /* Sync header scroll with body (field names move with columns) */
+  const bodyEl=document.getElementById("body");
+  bodyEl.onscroll = () => { headCols.style.transform = `translateX(${-bodyEl.scrollLeft}px)`; };
 
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
