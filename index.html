@@ -163,8 +163,28 @@ function linkify(text){
   });
 }
 
-/* Division + field helpers */
-function detectDivision(txt){ const m=(txt||"").match(/\b(\d{2}U)\b/i); return m?m[1].toUpperCase():""; }
+/* -------- Division + field helpers -------- */
+
+/* Recognizes: "9/10 A American", "11/12 AA", "10U Gold", "12u", "8U", "7/8 B", etc. */
+function detectDivision(text){
+  if(!text) return "";
+  const patterns = [
+    /\b\d{1,2}\s*\/\s*\d{1,2}\s*(?:AA|AAA|A|B|C|Gold|Silver|Bronze|American|National)\b(?:\s*\b(?:American|National|Gold|Silver|Bronze)\b)?/i,
+    /\b\d{1,2}\s*\/\s*\d{1,2}\b(?:\s*(?:AA|AAA|A|B|C))?(?:\s*\b(?:American|National|Gold|Silver|Bronze)\b)?/i,
+    /\b\d{1,2}\s*[Uu]\b(?:\s*(?:AA|AAA|A|B|C|Gold|Silver|Bronze|Rec|Select|American|National|Gold|Silver|Bronze))?/i
+  ];
+  let best = "";
+  for(const re of patterns){
+    const m = text.match(re);
+    if(m && m[0].length > best.length) best = m[0];
+  }
+  if(!best) return "";
+  // Normalize "12u" -> "12U" but keep words like "American" cased.
+  best = best.replace(/(\d{1,2})\s*[Uu]\b/, (_,n)=>`${n}U`);
+  // Collapse multi-spaces
+  return best.replace(/\s+/g,' ').trim();
+}
+
 function fieldFromDescription(desc){ if(!desc) return ""; const parts=desc.split(">").map(s=>s.trim()).filter(Boolean); return parts.length?parts[parts.length-1]:""; }
 function guessFieldFromText(title, location){
   const hay=(title||"")+" | "+(location||""); let m;
@@ -207,8 +227,9 @@ async function fetchEvents(){
       const start=ev.start?new Date(ev.start):null;
       const end  =ev.end?new Date(ev.end):start;
       const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
-      const div  =detectDivision(title)||detectDivision(desc);
-      let field  =fieldFromDescription(desc);
+      /* >>> improved division detection <<< */
+      const div  = detectDivision(title) || detectDivision(desc);
+      let field  = fieldFromDescription(desc);
       if(!field) field = guessFieldFromText(title, loc);
       return { s:start, e:end, t:title, l:loc, desc, div, field };
     }).filter(e=>e.s && e.e);
@@ -321,7 +342,7 @@ function render(){
       node.setAttribute('tabindex','0');
       node.title = (ev.l||"").replace(/\s+/g," ").trim();
 
-      /* age division now visible on the card */
+      /* division now reliably visible on the card */
       node.innerHTML = `
         <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
         <div class="title">${ev.t}</div>
