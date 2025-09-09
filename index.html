@@ -165,23 +165,49 @@ function linkify(text){
 
 /* -------- Division + field helpers -------- */
 
-/* Recognizes: "9/10 A American", "11/12 AA", "10U Gold", "12u", "8U", "7/8 B", etc. */
+/* Robustly detect division across formats:
+   - "9/10 A American", "9/10A American", "9/10-A American"
+   - "11/12 AA", "7/8 B", "10U Gold", "12u silver", etc.
+   - "Division: 9/10 A American"
+*/
 function detectDivision(text){
   if(!text) return "";
-  const patterns = [
-    /\b\d{1,2}\s*\/\s*\d{1,2}\s*(?:AA|AAA|A|B|C|Gold|Silver|Bronze|American|National)\b(?:\s*\b(?:American|National|Gold|Silver|Bronze)\b)?/i,
-    /\b\d{1,2}\s*\/\s*\d{1,2}\b(?:\s*(?:AA|AAA|A|B|C))?(?:\s*\b(?:American|National|Gold|Silver|Bronze)\b)?/i,
-    /\b\d{1,2}\s*[Uu]\b(?:\s*(?:AA|AAA|A|B|C|Gold|Silver|Bronze|Rec|Select|American|National|Gold|Silver|Bronze))?/i
-  ];
-  let best = "";
-  for(const re of patterns){
-    const m = text.match(re);
-    if(m && m[0].length > best.length) best = m[0];
+  const candidates = [];
+
+  // Normalize separators to make matching easier
+  const norm = text.replace(/[–—]/g,'-');
+
+  // 1) Labeled forms: "Division: 9/10 A American"
+  const labeled = /(?:^|\b)Division\s*:?\s*([0-9]{1,2}\s*\/\s*[0-9]{1,2}\s*(?:AA|AAA|A|B|C)?(?:\s*(?:American|National|Gold|Silver|Bronze))?)/i.exec(norm);
+  if(labeled) candidates.push(labeled[1]);
+
+  // 2) Compound ages with optional grade + descriptor
+  const compoundRE = /([0-9]{1,2})\s*[/\-]?\s*([0-9]{1,2})\s*(?:[Uu])?\s*(AA|AAA|A|B|C)?(?:\s*(American|National|Gold|Silver|Bronze))?/ig;
+  let m;
+  while((m = compoundRE.exec(norm))){
+    const age = `${m[1]}/${m[2]}`; // "9/10"
+    const grade = m[3] ? ` ${m[3].toUpperCase()}` : "";
+    const desc = m[4] ? ` ${m[4]}` : "";
+    candidates.push((age + grade + desc).trim());
   }
-  if(!best) return "";
-  // Normalize "12u" -> "12U" but keep words like "American" cased.
-  best = best.replace(/(\d{1,2})\s*[Uu]\b/, (_,n)=>`${n}U`);
-  // Collapse multi-spaces
+
+  // 3) Single age-U with optional descriptor: "10U Gold", "12u", "7U AA"
+  const singleU = /\b([0-9]{1,2})\s*[Uu]\b(?:\s*(AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?/ig;
+  while((m = singleU.exec(norm))){
+    candidates.push(`${m[1]}U${m[2] ? ' ' + m[2].toUpperCase() : ''}`.trim());
+  }
+
+  if(!candidates.length) return "";
+
+  // Choose the "best": longest string wins; tie-break by one containing U or two ages
+  candidates.sort((a,b)=>{
+    if(b.length !== a.length) return b.length - a.length;
+    const score = s => (/\d+\/\d+/.test(s)?2:0) + (/\d+U/.test(s)?1:0);
+    return score(b) - score(a);
+  });
+
+  // Normalize capitalization (keep words cased, force U uppercase)
+  const best = candidates[0].replace(/(\d{1,2})\s*[Uu]\b/g,(_,n)=>`${n}U`);
   return best.replace(/\s+/g,' ').trim();
 }
 
@@ -227,7 +253,6 @@ async function fetchEvents(){
       const start=ev.start?new Date(ev.start):null;
       const end  =ev.end?new Date(ev.end):start;
       const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
-      /* >>> improved division detection <<< */
       const div  = detectDivision(title) || detectDivision(desc);
       let field  = fieldFromDescription(desc);
       if(!field) field = guessFieldFromText(title, loc);
@@ -342,7 +367,7 @@ function render(){
       node.setAttribute('tabindex','0');
       node.title = (ev.l||"").replace(/\s+/g," ").trim();
 
-      /* division now reliably visible on the card */
+      /* division reliably visible on the card */
       node.innerHTML = `
         <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
         <div class="title">${ev.t}</div>
@@ -388,7 +413,7 @@ function openSheet(ev){
   const metaParts = [
     `${fmtTime(ev.s)} – ${fmtTime(ev.e)}`,
     ev.field ? `• ${ev.field}` : '',
-    ev.div ? `• ${ev.div}` : ''
+    ev.div ? `• <strong>${ev.div}</strong>` : ''   // emphasize division when present
   ].filter(Boolean);
   const locLine = ev.l ? `<br>Location: ${ev.l}` : '';
   document.getElementById('sheetMeta').innerHTML = metaParts.join(' ') + locLine;
