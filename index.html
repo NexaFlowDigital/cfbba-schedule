@@ -24,16 +24,20 @@
   .head{position:sticky;top:54px;z-index:20;display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--head);overflow:hidden}
   .timeHead{flex:0 0 82px;display:flex;align-items:center;justify-content:center;font-weight:700;border-right:1px solid var(--line);background:#fbfbff;position:sticky;left:0;z-index:25}
   .headCols{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;will-change:transform}
-  .colHead{padding:10px 8px;border-right:1px solid var(--line);font-weight:700;white-space:nowrap;background:var(--head)}
+
+  .colHead{
+    padding:10px 8px;border-right:1px solid rgba(255,255,255,.35);
+    font-weight:700;white-space:nowrap;background:var(--head);
+  }
 
   /* Grid scroller */
   .body{
     display:flex;align-items:stretch;position:relative;
     overflow-x:auto;              /* horizontal scroll */
-    overflow-y:auto;              /* NEW: vertical scroll inside grid */
+    overflow-y:auto;              /* vertical scroll inside grid */
     -webkit-overflow-scrolling:touch;
-    overscroll-behavior:contain;  /* keep scrolling inside, no rubber band */
-    touch-action:pan-x pan-y;     /* allow both directions */
+    overscroll-behavior:contain;
+    touch-action:pan-x pan-y;
     height: 60vh;                 /* fallback; JS sets exact height */
   }
   .timeRail{flex:0 0 82px;position:sticky;left:0;z-index:15;border-right:1px solid var(--line);background:#fbfbff}
@@ -42,17 +46,25 @@
   .timeLabel{position:absolute;left:8px;transform:translateY(-50%);font-weight:700}
 
   .cols{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;position:relative}
-  .col{position:relative;border-right:1px solid var(--line);background:
-    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hourPx) - 1px), rgba(0,0,0,0.05) calc(var(--hourPx) - 1px), rgba(0,0,0,0.05) var(--hourPx));
+  .col{
+    position:relative;border-right:1px solid var(--line);
+    background:repeating-linear-gradient(
+      to bottom, transparent 0, transparent calc(var(--hourPx) - 1px),
+      rgba(0,0,0,0.05) calc(var(--hourPx) - 1px), rgba(0,0,0,0.05) var(--hourPx)
+    );
   }
 
   .event{
-    position:absolute;left:0;right:6px;background:#eef2ff;border-left:4px solid var(--accent);
+    position:absolute;left:0;right:6px;
+    background:var(--fieldColor, #eef2ff); /* colored per field */
+    border-left:4px solid rgba(255,255,255,.35);
     border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;cursor:pointer;
+    color:#fff; /* readable on colored cards */
   }
+  .event .time{font-size:11px;opacity:.9;margin-bottom:2px}
   .event .title{font-weight:700}
-  .event .muted{font-size:11px}
-  .event:focus{outline:2px solid var(--accent)}
+  .event .muted{font-size:11px;color:rgba(255,255,255,.9)} /* division line on card */
+  .event:focus{outline:2px solid rgba(255,255,255,.6)}
   .event[data-level]{right:auto}
 
   /* Details sheet (modal) */
@@ -141,7 +153,7 @@ const nonEmpty=s=>s && String(s).trim().length>0;
 function showError(msg){ const box=document.getElementById("err"); box.style.display="block"; box.textContent=msg; }
 function clearError(){ const box=document.getElementById("err"); box.style.display="none"; box.textContent=""; }
 
-/* make plain-text URLs clickable for the sheet */
+/* Plain-text URLs → clickable (for sheet) */
 function linkify(text){
   if(!text) return "";
   const urlRe = /(https?:\/\/[^\s<>()]+)|((?:www\.)[^\s<>()]+)/gi;
@@ -151,6 +163,7 @@ function linkify(text){
   });
 }
 
+/* Division + field helpers */
 function detectDivision(txt){ const m=(txt||"").match(/\b(\d{2}U)\b/i); return m?m[1].toUpperCase():""; }
 function fieldFromDescription(desc){ if(!desc) return ""; const parts=desc.split(">").map(s=>s.trim()).filter(Boolean); return parts.length?parts[parts.length-1]:""; }
 function guessFieldFromText(title, location){
@@ -164,6 +177,18 @@ function guessFieldFromText(title, location){
   return (location||"").split(",")[0].trim();
 }
 function smartSort(a,b){ const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/); return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)]; }; const ka=key(a), kb=key(b); return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1); }
+
+/* ====== Field colors (deterministic) ====== */
+const FIELD_PALETTE = [
+  '#0ea5e9','#ef4444','#10b981','#6366f1','#f59e0b',
+  '#14b8a6','#6d28d9','#84cc16','#f97316','#1f7a8c',
+  '#e11d48','#22c55e'
+];
+function colorForField(name){
+  if(!name) return '#3b82f6';
+  let h=0; for(let i=0;i<name.length;i++) h=(h*31 + name.charCodeAt(i))>>>0;
+  return FIELD_PALETTE[h % FIELD_PALETTE.length];
+}
 
 /* ====== Fetch from proxy ====== */
 async function fetchEvents(){
@@ -237,7 +262,10 @@ function render(){
 
   /* Build sticky header: time + field names (headCols scroll-synced) */
   const headCols = document.getElementById("headCols");
-  headCols.innerHTML = colsList.map(f=>`<div class="colHead">${f}</div>`).join("");
+  headCols.innerHTML = colsList.map(f=>{
+    const c = colorForField(f);
+    return `<div class="colHead" style="background:${c};color:#fff">${f}</div>`;
+  }).join("");
 
   /* Build time rail ticks/labels */
   const hourPx = 60*PX_PER_MIN;
@@ -262,6 +290,10 @@ function render(){
     const col=document.createElement('div');
     col.className='col';
     col.style.height = (PX_PER_MIN*totalMin) + "px";
+
+    /* set per-field color so cards in this column inherit it */
+    const fieldColor = colorForField(field);
+    col.style.setProperty('--fieldColor', fieldColor);
 
     const es = dayEvents.filter(e=>e.field===field).map(e=>{
       const s = new Date(Math.max(e.s, dayStart));
@@ -289,6 +321,7 @@ function render(){
       node.setAttribute('tabindex','0');
       node.title = (ev.l||"").replace(/\s+/g," ").trim();
 
+      /* age division now visible on the card */
       node.innerHTML = `
         <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
         <div class="title">${ev.t}</div>
@@ -309,7 +342,7 @@ function render(){
   const bodyEl=document.getElementById("body");
   bodyEl.onscroll = () => { headCols.style.transform = `translateX(${-bodyEl.scrollLeft}px)`; };
 
-  adjustGridHeight(); /* NEW: set vertical size for inner scrolling */
+  adjustGridHeight();
 
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
@@ -318,7 +351,7 @@ function render(){
 function adjustGridHeight(){
   const headerH = document.querySelector('header')?.offsetHeight || 0;
   const headH   = document.querySelector('.head')?.offsetHeight || 0;
-  const totalOffset = headerH + headH + 24 /* wrap padding top/bottom approx */;
+  const totalOffset = headerH + headH + 24 /* wrap padding approx */;
   const h = Math.max(240, window.innerHeight - totalOffset);
   const bodyEl=document.getElementById('body');
   bodyEl.style.height = h + 'px';
