@@ -24,15 +24,17 @@
   .head{position:sticky;top:54px;z-index:20;display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--head);overflow:hidden}
   .timeHead{flex:0 0 82px;display:flex;align-items:center;justify-content:center;font-weight:700;border-right:1px solid var(--line);background:#fbfbff;position:sticky;left:0;z-index:25}
   .headCols{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;will-change:transform}
-
   .colHead{padding:10px 8px;border-right:1px solid var(--line);font-weight:700;white-space:nowrap;background:var(--head)}
 
-  /* Body (horizontal scroll area) */
+  /* Grid scroller */
   .body{
-    display:flex;align-items:stretch;overflow-x:auto;position:relative;
-    -webkit-overflow-scrolling:touch; /* iOS smooth */
-    overscroll-behavior-x:contain; overscroll-behavior-y:auto;
-    touch-action:pan-x pan-y; /* allow both directions */
+    display:flex;align-items:stretch;position:relative;
+    overflow-x:auto;              /* horizontal scroll */
+    overflow-y:auto;              /* NEW: vertical scroll inside grid */
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior:contain;  /* keep scrolling inside, no rubber band */
+    touch-action:pan-x pan-y;     /* allow both directions */
+    height: 60vh;                 /* fallback; JS sets exact height */
   }
   .timeRail{flex:0 0 82px;position:sticky;left:0;z-index:15;border-right:1px solid var(--line);background:#fbfbff}
   .timeRailInner{position:relative}
@@ -46,8 +48,7 @@
 
   .event{
     position:absolute;left:0;right:6px;background:#eef2ff;border-left:4px solid var(--accent);
-    border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;
-    cursor:pointer; /* tap target for mobile */
+    border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;cursor:pointer;
   }
   .event .title{font-weight:700}
   .event .muted{font-size:11px}
@@ -55,9 +56,7 @@
   .event[data-level]{right:auto}
 
   /* Details sheet (modal) */
-  .sheetBack{
-    position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:50;
-  }
+  .sheetBack{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:50}
   .sheet{
     position:fixed;left:50%;transform:translateX(-50%);bottom:0;right:0;max-width:720px;
     background:#fff;border-top-left-radius:16px;border-top-right-radius:16px;
@@ -75,16 +74,6 @@
   @media (max-width: 640px){
     .cols, .headCols{grid-auto-columns:minmax(120px,1fr)}
     .event{font-size:12px}
-  }
-    /* iOS scroll fixes */
-  .body{
-    -webkit-overflow-scrolling: touch;  /* smooth scrolling */
-    touch-action: pan-x;                /* allow horizontal here */
-  }
-  .timeRail,
-  .timeHead{
-    touch-action: pan-y;                /* allow vertical scrolling here */
-    pointer-events: none;               /* prevent touches from being trapped */
   }
 </style>
 </head>
@@ -297,17 +286,15 @@ function render(){
       node.style.left = `calc(${leftPct}% + ${gap/2}px)`;
       node.style.width = `calc(${widthPct}% - ${gap}px)`;
       node.setAttribute('data-level', level);
-      node.setAttribute('tabindex','0'); // keyboard/tap
+      node.setAttribute('tabindex','0');
       node.title = (ev.l||"").replace(/\s+/g," ").trim();
 
-      /* NOTE: keep the small, unclipped card; full description is shown in the sheet */
       node.innerHTML = `
         <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
         <div class="title">${ev.t}</div>
         ${ev.div ? `<div class="muted">${ev.div}</div>` : ""}
       `;
 
-      /* Open details sheet on tap/click/Enter/Space */
       const open = ()=>openSheet(ev);
       node.addEventListener('click', open);
       node.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); } });
@@ -322,7 +309,19 @@ function render(){
   const bodyEl=document.getElementById("body");
   bodyEl.onscroll = () => { headCols.style.transform = `translateX(${-bodyEl.scrollLeft}px)`; };
 
+  adjustGridHeight(); /* NEW: set vertical size for inner scrolling */
+
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
+}
+
+/* ====== Set grid height to viewport (so vertical scroll happens inside) ====== */
+function adjustGridHeight(){
+  const headerH = document.querySelector('header')?.offsetHeight || 0;
+  const headH   = document.querySelector('.head')?.offsetHeight || 0;
+  const totalOffset = headerH + headH + 24 /* wrap padding top/bottom approx */;
+  const h = Math.max(240, window.innerHeight - totalOffset);
+  const bodyEl=document.getElementById('body');
+  bodyEl.style.height = h + 'px';
 }
 
 /* ====== Details Sheet ====== */
@@ -370,6 +369,9 @@ document.getElementById("nextGame").onclick=()=> jumpToGame(true);
 document.getElementById("fieldFilter").onchange=render;
 document.getElementById("divisionFilter").onchange=render;
 document.getElementById("picker").onchange = e=>{ currentDay=new Date(e.target.value+"T12:00:00"); render(); };
+
+/* Keep grid sized correctly on resize/rotation */
+window.addEventListener('resize', adjustGridHeight);
 
 /* ====== Init ====== */
 fetchEvents();
