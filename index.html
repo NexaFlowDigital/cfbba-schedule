@@ -28,7 +28,12 @@
   .colHead{padding:10px 8px;border-right:1px solid var(--line);font-weight:700;white-space:nowrap;background:var(--head)}
 
   /* Body (horizontal scroll area) */
-  .body{display:flex;align-items:stretch;overflow-x:auto;position:relative}
+  .body{
+    display:flex;align-items:stretch;overflow-x:auto;position:relative;
+    -webkit-overflow-scrolling:touch; /* iOS smooth */
+    overscroll-behavior-x:contain; overscroll-behavior-y:auto;
+    touch-action:pan-x pan-y; /* allow both directions */
+  }
   .timeRail{flex:0 0 82px;position:sticky;left:0;z-index:15;border-right:1px solid var(--line);background:#fbfbff}
   .timeRailInner{position:relative}
   .timeTick{position:absolute;left:0;right:0;height:0;border-top:1px solid var(--line)}
@@ -41,10 +46,36 @@
 
   .event{
     position:absolute;left:0;right:6px;background:#eef2ff;border-left:4px solid var(--accent);
-    border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0
+    border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;
+    cursor:pointer; /* tap target for mobile */
   }
   .event .title{font-weight:700}
+  .event .muted{font-size:11px}
+  .event:focus{outline:2px solid var(--accent)}
   .event[data-level]{right:auto}
+
+  /* Details sheet (modal) */
+  .sheetBack{
+    position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:50;
+  }
+  .sheet{
+    position:fixed;left:50%;transform:translateX(-50%);bottom:0;right:0;max-width:720px;
+    background:#fff;border-top-left-radius:16px;border-top-right-radius:16px;
+    box-shadow:0 -8px 24px rgba(0,0,0,.2);padding:16px;z-index:60;display:none;
+    max-height:80vh;overflow:auto;-webkit-overflow-scrolling:touch;
+  }
+  .sheet h3{margin:0 0 4px 0}
+  .sheet .meta{color:var(--muted);font-size:13px;margin-bottom:10px}
+  .sheet .desc{white-space:pre-wrap;word-wrap:break-word}
+  .sheet a{color:#0a58ca;text-decoration:underline;word-break:break-word}
+  .sheet .close{position:sticky;top:0;display:flex;justify-content:flex-end;margin:-16px -16px 8px 0;padding:8px}
+  .sheet .close button{border-radius:8px}
+
+  /* Mobile tweaks */
+  @media (max-width: 640px){
+    .cols, .headCols{grid-auto-columns:minmax(120px,1fr)}
+    .event{font-size:12px}
+  }
 </style>
 </head>
 <body>
@@ -80,6 +111,15 @@
   </div>
 </div>
 
+<!-- Details sheet -->
+<div id="sheetBack" class="sheetBack" aria-hidden="true"></div>
+<div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="close"><button id="sheetClose">Close ✕</button></div>
+  <h3 id="sheetTitle"></h3>
+  <div id="sheetMeta" class="meta"></div>
+  <div id="sheetDesc" class="desc"></div>
+</div>
+
 <script>
 /* ====== Config (proxy URL included) ====== */
 const PROXY_URL = "https://script.google.com/macros/s/AKfycbzi0d7zDdrVYeZrq759SadhE6v7o0BvbyzEbMl5aL0kCLiXtsEb2ghMJlfXmqkvGiSw/exec";
@@ -101,6 +141,16 @@ const uniq=arr=>[...new Set(arr)];
 const nonEmpty=s=>s && String(s).trim().length>0;
 function showError(msg){ const box=document.getElementById("err"); box.style.display="block"; box.textContent=msg; }
 function clearError(){ const box=document.getElementById("err"); box.style.display="none"; box.textContent=""; }
+
+/* make plain-text URLs clickable for the sheet */
+function linkify(text){
+  if(!text) return "";
+  const urlRe = /(https?:\/\/[^\s<>()]+)|((?:www\.)[^\s<>()]+)/gi;
+  return text.replace(urlRe,(m)=>{
+    const url = m.startsWith('http') ? m : `http://${m}`;
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${m}</a>`;
+  });
+}
 
 function detectDivision(txt){ const m=(txt||"").match(/\b(\d{2}U)\b/i); return m?m[1].toUpperCase():""; }
 function fieldFromDescription(desc){ if(!desc) return ""; const parts=desc.split(">").map(s=>s.trim()).filter(Boolean); return parts.length?parts[parts.length-1]:""; }
@@ -237,12 +287,21 @@ function render(){
       node.style.left = `calc(${leftPct}% + ${gap/2}px)`;
       node.style.width = `calc(${widthPct}% - ${gap}px)`;
       node.setAttribute('data-level', level);
+      node.setAttribute('tabindex','0'); // keyboard/tap
       node.title = (ev.l||"").replace(/\s+/g," ").trim();
+
+      /* NOTE: keep the small, unclipped card; full description is shown in the sheet */
       node.innerHTML = `
         <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
         <div class="title">${ev.t}</div>
         ${ev.div ? `<div class="muted">${ev.div}</div>` : ""}
       `;
+
+      /* Open details sheet on tap/click/Enter/Space */
+      const open = ()=>openSheet(ev);
+      node.addEventListener('click', open);
+      node.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); } });
+
       col.appendChild(node);
     });
 
@@ -255,6 +314,33 @@ function render(){
 
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
+
+/* ====== Details Sheet ====== */
+const sheet = document.getElementById('sheet');
+const sheetBack = document.getElementById('sheetBack');
+const sheetClose = document.getElementById('sheetClose');
+
+function openSheet(ev){
+  document.getElementById('sheetTitle').textContent = ev.t || '(No title)';
+  const metaParts = [
+    `${fmtTime(ev.s)} – ${fmtTime(ev.e)}`,
+    ev.field ? `• ${ev.field}` : '',
+    ev.div ? `• ${ev.div}` : ''
+  ].filter(Boolean);
+  const locLine = ev.l ? `<br>Location: ${ev.l}` : '';
+  document.getElementById('sheetMeta').innerHTML = metaParts.join(' ') + locLine;
+  document.getElementById('sheetDesc').innerHTML = ev.desc ? linkify(ev.desc) : '<span class="muted">No description.</span>';
+
+  sheetBack.style.display='block';
+  sheet.style.display='block';
+  sheet.focus();
+}
+function closeSheet(){
+  sheet.style.display='none';
+  sheetBack.style.display='none';
+}
+sheetBack.addEventListener('click', closeSheet);
+sheetClose.addEventListener('click', closeSheet);
 
 /* ====== Navigation ====== */
 function jumpToGame(next=true){
