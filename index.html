@@ -76,6 +76,16 @@
     .cols, .headCols{grid-auto-columns:minmax(120px,1fr)}
     .event{font-size:12px}
   }
+    /* iOS scroll fixes */
+  .body{
+    -webkit-overflow-scrolling: touch;  /* smooth scrolling */
+    touch-action: pan-x;                /* allow horizontal here */
+  }
+  .timeRail,
+  .timeHead{
+    touch-action: pan-y;                /* allow vertical scrolling here */
+    pointer-events: none;               /* prevent touches from being trapped */
+  }
 </style>
 </head>
 <body>
