@@ -280,19 +280,22 @@ async function fetchEvents(){
     const data = await res.json();
     if(!data || !Array.isArray(data.items)){ showError("Proxy returned unexpected data."); statusEl.textContent="Bad data."; return; }
 
-    allEvents = data.items.map(ev=>{
-      const start=ev.start?new Date(ev.start):null;
-      const end  =ev.end?new Date(ev.end):start;
-      const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
+allEvents = data.items.map(ev=>{
+  const start = ev.start ? new Date(ev.start) : null;
+  const end   = ev.end   ? new Date(ev.end)   : start;
+  const title = ev.title || "", loc = ev.location || "", desc = ev.description || "";
 
-      const scheduleRaw = scheduleFromEvent(ev);     // << read schedule from payload if available
-      const div  = resolveDivisionFrom(title, desc, scheduleRaw);
+  // NEW: take the true schedule name straight from the proxy if present
+  const schedule = (ev.schedule || "").trim();
 
-      let field  = fieldFromDescription(desc);
-      if(!field) field = guessFieldFromText(title, loc);
+  // Use schedule as division (fallback to the previous resolver so nothing breaks)
+  const div = schedule || resolveDivision(title, desc, schedule);
 
-      return { s:start, e:end, t:title, l:loc, desc, div, field };
-    }).filter(e=>e.s && e.e);
+  let field = fieldFromDescription(desc);
+  if (!field) field = guessFieldFromText(title, loc);
+
+  return { s:start, e:end, t:title, l:loc, desc, div, field, schedule, calendarName: ev.calendarName || "" };
+}).filter(e => e.s && e.e);
 
     fields = uniq(allEvents.map(e=>e.field).filter(nonEmpty)).sort(smartSort);
     gameDates = uniq(allEvents.map(e=>localYMD(e.s))).sort();
