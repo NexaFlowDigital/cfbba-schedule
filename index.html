@@ -20,15 +20,12 @@
 
   /* Schedule shell */
   .sched{background:var(--card);border:1px solid var(--line);box-shadow:0 2px 6px rgba(0,0,0,.06)}
+
   /* Sticky top header (time label + scrolling field headers) */
   .head{position:sticky;top:54px;z-index:20;display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--head);overflow:hidden}
   .timeHead{flex:0 0 82px;display:flex;align-items:center;justify-content:center;font-weight:700;border-right:1px solid var(--line);background:#fbfbff;position:sticky;left:0;z-index:25}
   .headCols{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;will-change:transform}
-
-  .colHead{
-    padding:10px 8px;border-right:1px solid rgba(255,255,255,.35);
-    font-weight:700;white-space:nowrap;background:var(--head);
-  }
+  .colHead{padding:10px 8px;border-right:1px solid rgba(255,255,255,.35);font-weight:700;white-space:nowrap;background:var(--head)}
 
   /* Grid scroller */
   .body{
@@ -38,7 +35,7 @@
     -webkit-overflow-scrolling:touch;
     overscroll-behavior:contain;
     touch-action:pan-x pan-y;
-    height: 60vh;                 /* fallback; JS sets exact height */
+    height: 60vh;                 /* JS will refine height */
   }
   .timeRail{flex:0 0 82px;position:sticky;left:0;z-index:15;border-right:1px solid var(--line);background:#fbfbff}
   .timeRailInner{position:relative}
@@ -59,11 +56,11 @@
     background:var(--fieldColor, #eef2ff); /* colored per field */
     border-left:4px solid rgba(255,255,255,.35);
     border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;cursor:pointer;
-    color:#fff; /* readable on colored cards */
+    color:#fff;
   }
   .event .time{font-size:11px;opacity:.9;margin-bottom:2px}
   .event .title{font-weight:700}
-  .event .muted{font-size:11px;color:rgba(255,255,255,.9)} /* division line on card */
+  .event .muted{font-size:11px;color:rgba(255,255,255,.9)}
   .event:focus{outline:2px solid rgba(255,255,255,.6)}
   .event[data-level]{right:auto}
 
@@ -82,7 +79,6 @@
   .sheet .close{position:sticky;top:0;display:flex;justify-content:flex-end;margin:-16px -16px 8px 0;padding:8px}
   .sheet .close button{border-radius:8px}
 
-  /* Mobile tweaks */
   @media (max-width: 640px){
     .cols, .headCols{grid-auto-columns:minmax(120px,1fr)}
     .event{font-size:12px}
@@ -136,7 +132,7 @@
 const PROXY_URL = "https://script.google.com/macros/s/AKfycbzi0d7zDdrVYeZrq759SadhE6v7o0BvbyzEbMl5aL0kCLiXtsEb2ghMJlfXmqkvGiSw/exec";
 const START_HOUR = 7;
 const END_HOUR   = 22;
-const PX_PER_MIN = 1;     // 60px per hour (1px per minute)
+const PX_PER_MIN = 1;
 const REFRESH_MS = 60000;
 
 /* ====== State ====== */
@@ -163,7 +159,7 @@ function linkify(text){
   });
 }
 
-/* ---------- Division extraction ---------- */
+/* ---------- Division / Schedule helpers ---------- */
 
 /* Normalize & validate a candidate division */
 function normalizeDivision(s){
@@ -193,64 +189,60 @@ function normalizeDivision(s){
   return "";
 }
 
-/* Pull “Schedule name” from description lines if present */
-function divisionFromScheduleLine(desc){
-  if(!desc) return "";
-  const lines = desc.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-
-  // Ignore admin/meta lines that can include numbers like 1/4
-  const IGNORE = /^(match\s*order|round|action|location|select\s*field|select\s*location)\b/i;
-
-  for(const raw of lines){
-    const line = raw.replace(/^schedule\s*:\s*/i,''); // "Schedule: 11/12 A American"
-    if(IGNORE.test(line)) continue;
-
-    // Only consider short lines (typical schedule names) or lines explicitly labeled as Schedule
-    if (/^schedule\s*:/i.test(raw) || line.length <= 32) {
-      const norm = normalizeDivision(line);
-      if(norm) return norm;
+/* Prefer schedule name straight from the payload (if present) */
+function scheduleFromEvent(ev){
+  const keys = [
+    'schedule','scheduleName','schedule_name',
+    'division','divisionName',
+    'calendar','calendarName','calendarSummary',
+    'calendar_title','calendarTitle','league','ageDivision'
+  ];
+  for(const k of keys){
+    if(k in ev){
+      const v = ev[k];
+      if(typeof v === 'string' && v.trim()) return v.trim();
+      if(v && typeof v === 'object'){
+        for(const nk of ['summary','name','title']){
+          if(typeof v[nk] === 'string' && v[nk].trim()) return v[nk].trim();
+        }
+      }
     }
   }
-  return "";
+  return '';
 }
 
-/* Fallback: scan whole text but validate strictly */
+/* Fallback: scan text but validate strictly */
 function detectDivisionAnywhere(text){
   if(!text) return "";
   const norm = text.replace(/[–—]/g,'-');
 
-  const candidates = [];
-
-  // Broad slash variants (validated later)
+  const cands = [];
   let m;
+
   const broadSlash = /(\d{1,2}\s*[\/-]\s*\d{1,2}\s*(?:[Aa]{1,3}|[ABC])?(?:\s*(?:American|National|Gold|Silver|Bronze))?)/ig;
-  while((m=broadSlash.exec(norm))) candidates.push(m[1]);
+  while((m=broadSlash.exec(norm))) cands.push(m[1]);
 
-  // Broad U variants
   const broadU = /(\d{1,2}\s*[Uu](?:\s*(?:AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?)/ig;
-  while((m=broadU.exec(norm))) candidates.push(m[1]);
+  while((m=broadU.exec(norm))) cands.push(m[1]);
 
-  const val = candidates.map(normalizeDivision).filter(Boolean);
+  const val = cands.map(normalizeDivision).filter(Boolean);
   if(!val.length) return "";
   val.sort((a,b)=>b.length-a.length);
   return val[0];
 }
 
-/* Main division resolver */
-function resolveDivision(title, desc){
-  // 1) Prefer explicit "Schedule" line / short-name lines in the description
-  const fromSchedule = divisionFromScheduleLine(desc);
-  if(fromSchedule) return fromSchedule;
-
-  // 2) Then look anywhere in description
+function resolveDivisionFrom(title, desc, scheduleRaw){
+  // 1) Schedule field from payload (strongest signal)
+  if(scheduleRaw){
+    const n = normalizeDivision(scheduleRaw) || scheduleRaw.trim();
+    if(n) return n;
+  }
+  // 2) Try in description
   const fromDesc = detectDivisionAnywhere(desc);
   if(fromDesc) return fromDesc;
-
-  // 3) Finally, try the title
+  // 3) Finally try title
   const fromTitle = detectDivisionAnywhere(title);
-  if(fromTitle) return fromTitle;
-
-  return "";
+  return fromTitle || "";
 }
 
 /* ---------- Field helpers ---------- */
@@ -268,11 +260,7 @@ function guessFieldFromText(title, location){
 function smartSort(a,b){ const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/); return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)]; }; const ka=key(a), kb=key(b); return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1); }
 
 /* ====== Field colors (deterministic) ====== */
-const FIELD_PALETTE = [
-  '#0ea5e9','#ef4444','#10b981','#6366f1','#f59e0b',
-  '#14b8a6','#6d28d9','#84cc16','#f97316','#1f7a8c',
-  '#e11d48','#22c55e'
-];
+const FIELD_PALETTE = ['#0ea5e9','#ef4444','#10b981','#6366f1','#f59e0b','#14b8a6','#6d28d9','#84cc16','#f97316','#1f7a8c','#e11d48','#22c55e'];
 function colorForField(name){
   if(!name) return '#3b82f6';
   let h=0; for(let i=0;i<name.length;i++) h=(h*31 + name.charCodeAt(i))>>>0;
@@ -297,7 +285,9 @@ async function fetchEvents(){
       const end  =ev.end?new Date(ev.end):start;
       const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
 
-      const div  = resolveDivision(title, desc);  // <<< uses Schedule name first
+      const scheduleRaw = scheduleFromEvent(ev);     // << read schedule from payload if available
+      const div  = resolveDivisionFrom(title, desc, scheduleRaw);
+
       let field  = fieldFromDescription(desc);
       if(!field) field = guessFieldFromText(title, loc);
 
@@ -382,7 +372,6 @@ function render(){
     col.className='col';
     col.style.height = (PX_PER_MIN*totalMin) + "px";
 
-    /* per-field color (cards inherit) */
     const fieldColor = colorForField(field);
     col.style.setProperty('--fieldColor', fieldColor);
 
@@ -441,9 +430,8 @@ function render(){
 function adjustGridHeight(){
   const headerH = document.querySelector('header')?.offsetHeight || 0;
   const headH   = document.querySelector('.head')?.offsetHeight || 0;
-  const totalOffset = headerH + headH + 24; /* wrap padding approx */
-  const h = Math.max(240, window.innerHeight - totalOffset);
-  document.getElementById('body').style.height = h + 'px';
+  const totalOffset = headerH + headH + 24;
+  document.getElementById('body').style.height = Math.max(240, window.innerHeight - totalOffset) + 'px';
 }
 
 /* ====== Details Sheet ====== */
@@ -466,10 +454,7 @@ function openSheet(ev){
   sheet.style.display='block';
   sheet.focus();
 }
-function closeSheet(){
-  sheet.style.display='none';
-  sheetBack.style.display='none';
-}
+function closeSheet(){ sheet.style.display='none'; sheetBack.style.display='none'; }
 sheetBack.addEventListener('click', closeSheet);
 sheetClose.addEventListener('click', closeSheet);
 
