@@ -132,7 +132,7 @@
 </div>
 
 <script>
-/* ====== Config (proxy URL included) ====== */
+/* ====== Config ====== */
 const PROXY_URL = "https://script.google.com/macros/s/AKfycbzi0d7zDdrVYeZrq759SadhE6v7o0BvbyzEbMl5aL0kCLiXtsEb2ghMJlfXmqkvGiSw/exec";
 const START_HOUR = 7;
 const END_HOUR   = 22;
@@ -153,7 +153,7 @@ const nonEmpty=s=>s && String(s).trim().length>0;
 function showError(msg){ const box=document.getElementById("err"); box.style.display="block"; box.textContent=msg; }
 function clearError(){ const box=document.getElementById("err"); box.style.display="none"; box.textContent=""; }
 
-/* Plain-text URLs → clickable (for sheet) */
+/* Make URLs clickable in the sheet */
 function linkify(text){
   if(!text) return "";
   const urlRe = /(https?:\/\/[^\s<>()]+)|((?:www\.)[^\s<>()]+)/gi;
@@ -163,54 +163,97 @@ function linkify(text){
   });
 }
 
-/* -------- Division + field helpers -------- */
+/* ---------- Division extraction ---------- */
 
-/* Robustly detect division across formats while avoiding "1/4"-type noise.
-   Accept:
-     - 7/8, 9/10A, 11/12 AA, 13/14 B, ... (ages 7–18)
-     - 4U ... 18U with optional AA/AAA/A/B/C/American/National/Gold/Silver/Bronze
-*/
-function detectDivision(text){
-  if(!text) return "";
-  const norm = text.replace(/[–—]/g,'-');
-  const candidates = [];
+/* Normalize & validate a candidate division */
+function normalizeDivision(s){
+  if(!s) return "";
+  s = s.replace(/[–—]/g,'-').replace(/\s+/g,' ').trim();
 
-  // 1) Slash ages with optional attached grade (e.g., 9/10A) and/or descriptor
-  const slashRE = /\b(7|8|9|10|11|12|13|14|15|16|17|18)\s*[/\-]\s*(7|8|9|10|11|12|13|14|15|16|17|18)\s*(?:([Aa]{1,3}|[ABC]))?(?:\s*(American|National|Gold|Silver|Bronze))?\b/ig;
-  let m;
-  while((m = slashRE.exec(norm))){
-    const age = `${m[1]}/${m[2]}`;
-    const grade = m[3] ? ` ${m[3].toUpperCase()}` : "";
-    const desc  = m[4] ? ` ${m[4]}` : "";
-    candidates.push((age + grade + desc).trim());
+  // 4U..18U
+  let m = /^(\d{1,2})\s*[Uu]\b(?:\s*(AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?$/i.exec(s);
+  if(m){
+    const age = +m[1];
+    if(age>=4 && age<=18) return `${age}U${m[2] ? ' ' + m[2].toUpperCase() : ''}`;
+    return "";
   }
 
-  // 2) Single age with U (4U–18U) and optional grade/descriptor
-  const uRE = /\b(4|5|6|7|8|9|10|11|12|13|14|15|16|17|18)\s*[Uu]\b(?:\s*(AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?/ig;
-  while((m = uRE.exec(norm))){
-    const ageU = `${m[1]}U` + (m[2] ? ` ${m[2].toUpperCase()}` : "");
-    candidates.push(ageU);
-  }
-
-  if(!candidates.length){
-    // 3) Labeled form "Division: 9/10 A American"
-    const labeled = /Division\s*:?\s*([^\n|,]+)/i.exec(norm);
-    if(labeled){
-      return detectDivision(labeled[1]); // recurse on just the label content
+  // 7/8..18/18 with optional A/AA/AAA (glued or spaced) + optional descriptor
+  m = /^(\d{1,2})\s*[\/-]\s*(\d{1,2})\s*(?:([Aa]{1,3}|[ABC]))?(?:\s*(American|National|Gold|Silver|Bronze))?$/i.exec(s);
+  if(m){
+    const a = +m[1], b = +m[2];
+    if(a>=7 && a<=18 && b>=7 && b<=18){
+      const grade = m[3] ? ' ' + m[3].toUpperCase() : '';
+      const desc  = m[4] ? ' ' + m[4] : '';
+      return `${a}/${b}${grade}${desc}`.trim();
     }
     return "";
   }
 
-  // Prefer the most informative candidate
-  candidates.sort((a,b)=>{
-    if(b.length !== a.length) return b.length - a.length;
-    const score = s => (/\d+\/\d+/.test(s)?2:0) + (/\d+U/.test(s)?1:0) + (/\bAA|AAA|A|B|C\b/i.test(s)?1:0);
-    return score(b) - score(a);
-  });
-
-  return candidates[0].replace(/\s+/g,' ').trim();
+  return "";
 }
 
+/* Pull “Schedule name” from description lines if present */
+function divisionFromScheduleLine(desc){
+  if(!desc) return "";
+  const lines = desc.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+
+  // Ignore admin/meta lines that can include numbers like 1/4
+  const IGNORE = /^(match\s*order|round|action|location|select\s*field|select\s*location)\b/i;
+
+  for(const raw of lines){
+    const line = raw.replace(/^schedule\s*:\s*/i,''); // "Schedule: 11/12 A American"
+    if(IGNORE.test(line)) continue;
+
+    // Only consider short lines (typical schedule names) or lines explicitly labeled as Schedule
+    if (/^schedule\s*:/i.test(raw) || line.length <= 32) {
+      const norm = normalizeDivision(line);
+      if(norm) return norm;
+    }
+  }
+  return "";
+}
+
+/* Fallback: scan whole text but validate strictly */
+function detectDivisionAnywhere(text){
+  if(!text) return "";
+  const norm = text.replace(/[–—]/g,'-');
+
+  const candidates = [];
+
+  // Broad slash variants (validated later)
+  let m;
+  const broadSlash = /(\d{1,2}\s*[\/-]\s*\d{1,2}\s*(?:[Aa]{1,3}|[ABC])?(?:\s*(?:American|National|Gold|Silver|Bronze))?)/ig;
+  while((m=broadSlash.exec(norm))) candidates.push(m[1]);
+
+  // Broad U variants
+  const broadU = /(\d{1,2}\s*[Uu](?:\s*(?:AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?)/ig;
+  while((m=broadU.exec(norm))) candidates.push(m[1]);
+
+  const val = candidates.map(normalizeDivision).filter(Boolean);
+  if(!val.length) return "";
+  val.sort((a,b)=>b.length-a.length);
+  return val[0];
+}
+
+/* Main division resolver */
+function resolveDivision(title, desc){
+  // 1) Prefer explicit "Schedule" line / short-name lines in the description
+  const fromSchedule = divisionFromScheduleLine(desc);
+  if(fromSchedule) return fromSchedule;
+
+  // 2) Then look anywhere in description
+  const fromDesc = detectDivisionAnywhere(desc);
+  if(fromDesc) return fromDesc;
+
+  // 3) Finally, try the title
+  const fromTitle = detectDivisionAnywhere(title);
+  if(fromTitle) return fromTitle;
+
+  return "";
+}
+
+/* ---------- Field helpers ---------- */
 function fieldFromDescription(desc){ if(!desc) return ""; const parts=desc.split(">").map(s=>s.trim()).filter(Boolean); return parts.length?parts[parts.length-1]:""; }
 function guessFieldFromText(title, location){
   const hay=(title||"")+" | "+(location||""); let m;
@@ -253,9 +296,11 @@ async function fetchEvents(){
       const start=ev.start?new Date(ev.start):null;
       const end  =ev.end?new Date(ev.end):start;
       const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
-      const div  = detectDivision(title) || detectDivision(desc);  // << updated detector
+
+      const div  = resolveDivision(title, desc);  // <<< uses Schedule name first
       let field  = fieldFromDescription(desc);
       if(!field) field = guessFieldFromText(title, loc);
+
       return { s:start, e:end, t:title, l:loc, desc, div, field };
     }).filter(e=>e.s && e.e);
 
@@ -287,7 +332,7 @@ function layoutLevels(events){
   return { placed, levelCount: Math.max(1, levels.length) };
 }
 
-/* ====== Render (absolute positioning by minute) ====== */
+/* ====== Render ====== */
 function render(){
   const iso=localYMD(currentDay);
   const fieldFilter=document.getElementById("fieldFilter").value;
@@ -306,14 +351,14 @@ function render(){
 
   const colsList = fieldFilter ? [fieldFilter] : fields.slice();
 
-  /* Build sticky header: time + field names (headCols scroll-synced) */
+  /* Sticky header field labels (color-coded) */
   const headCols = document.getElementById("headCols");
   headCols.innerHTML = colsList.map(f=>{
     const c = colorForField(f);
     return `<div class="colHead" style="background:${c};color:#fff">${f}</div>`;
   }).join("");
 
-  /* Build time rail ticks/labels */
+  /* Time rail */
   const hourPx = 60*PX_PER_MIN;
   document.getElementById("body").style.setProperty('--hourPx', hourPx+'px');
   const railInner=document.getElementById("timeRailInner");
@@ -328,7 +373,7 @@ function render(){
     }
   }
 
-  /* Build columns and position events */
+  /* Columns + events */
   const cols = document.getElementById("cols");
   cols.style.gridAutoColumns = 'minmax(140px,1fr)';
   cols.innerHTML = "";
@@ -337,7 +382,7 @@ function render(){
     col.className='col';
     col.style.height = (PX_PER_MIN*totalMin) + "px";
 
-    /* set per-field color so cards in this column inherit it */
+    /* per-field color (cards inherit) */
     const fieldColor = colorForField(field);
     col.style.setProperty('--fieldColor', fieldColor);
 
@@ -367,7 +412,6 @@ function render(){
       node.setAttribute('tabindex','0');
       node.title = (ev.l||"").replace(/\s+/g," ").trim();
 
-      /* division visible on the card */
       node.innerHTML = `
         <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
         <div class="title">${ev.t}</div>
@@ -393,14 +437,13 @@ function render(){
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
 
-/* ====== Set grid height to viewport (so vertical scroll happens inside) ====== */
+/* Fit grid to viewport so vertical scroll stays inside the table */
 function adjustGridHeight(){
   const headerH = document.querySelector('header')?.offsetHeight || 0;
   const headH   = document.querySelector('.head')?.offsetHeight || 0;
-  const totalOffset = headerH + headH + 24 /* wrap padding approx */;
+  const totalOffset = headerH + headH + 24; /* wrap padding approx */
   const h = Math.max(240, window.innerHeight - totalOffset);
-  const bodyEl=document.getElementById('body');
-  bodyEl.style.height = h + 'px';
+  document.getElementById('body').style.height = h + 'px';
 }
 
 /* ====== Details Sheet ====== */
@@ -448,8 +491,6 @@ document.getElementById("nextGame").onclick=()=> jumpToGame(true);
 document.getElementById("fieldFilter").onchange=render;
 document.getElementById("divisionFilter").onchange=render;
 document.getElementById("picker").onchange = e=>{ currentDay=new Date(e.target.value+"T12:00:00"); render(); };
-
-/* Keep grid sized correctly on resize/rotation */
 window.addEventListener('resize', adjustGridHeight);
 
 /* ====== Init ====== */
