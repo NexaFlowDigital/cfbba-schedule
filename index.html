@@ -289,7 +289,7 @@ allEvents = data.items.map(ev=>{
   const schedule = (ev.schedule || "").trim();
 
   // Use schedule as division (fallback to the previous resolver so nothing breaks)
-  const div = schedule || resolveDivision(title, desc, schedule);
+  const div = schedule || resolveDivisionFrom(title, desc, schedule);
 
   let field = fieldFromDescription(desc);
   if (!field) field = guessFieldFromText(title, loc);
