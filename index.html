@@ -17,12 +17,13 @@
   .wrap{padding:12px}
   .error{background:#fff3f3;border:1px solid #f5c2c7;color:#842029;padding:8px 10px;border-radius:8px;margin:8px 12px;display:none}
 
+  /* Schedule shell */
   .sched{background:var(--card);border:1px solid var(--line);box-shadow:0 2px 6px rgba(0,0,0,.06)}
 
-  /* Sticky header row */
+  /* Desktop/tablet header row (kept as-is) */
   .head{position:sticky;top:54px;z-index:20;display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--head);overflow:hidden}
   .timeHead{flex:0 0 82px;display:flex;align-items:center;justify-content:center;font-weight:700;border-right:1px solid var(--line);background:#fbfbff;position:sticky;left:0;z-index:25}
-  .headCols{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;will-change:transform}
+  .headCols{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column}
   .colHead{padding:10px 8px;border-right:1px solid rgba(255,255,255,.35);font-weight:700;white-space:nowrap;background:var(--head)}
 
   /* Grid scroller */
@@ -39,7 +40,8 @@
   .timeTick{position:absolute;left:0;right:0;height:0;border-top:1px solid var(--line)}
   .timeLabel{position:absolute;left:8px;transform:translateY(-50%);font-weight:700}
 
-  .cols{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;position:relative}
+  /* The columns */
+  .cols{flex:1 1 auto;display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;position:relative}
   .col{
     position:relative;border-right:1px solid var(--line);
     background:repeating-linear-gradient(
@@ -52,8 +54,7 @@
     position:absolute;left:0;right:6px;
     background:var(--fieldColor, #eef2ff);
     border-left:4px solid rgba(255,255,255,.35);
-    border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;cursor:pointer;
-    color:#fff;
+    border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;cursor:pointer;color:#fff;
   }
   .event .time{font-size:11px;opacity:.9;margin-bottom:2px}
   .event .title{font-weight:700}
@@ -61,23 +62,26 @@
   .event:focus{outline:2px solid rgba(255,255,255,.6)}
   .event[data-level]{right:auto}
 
-  .sheetBack{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:50}
-  .sheet{
-    position:fixed;left:50%;transform:translateX(-50%);bottom:0;right:0;max-width:720px;
-    background:#fff;border-top-left-radius:16px;border-top-right-radius:16px;
-    box-shadow:0 -8px 24px rgba(0,0,0,.2);padding:16px;z-index:60;display:none;
-    max-height:80vh;overflow:auto;-webkit-overflow-scrolling:touch;
+  /* Mobile “frozen” header INSIDE the scroller */
+  .floatHeadCols{
+    flex:1 1 auto;
+    display:grid;
+    grid-auto-columns:minmax(120px,1fr);
+    grid-auto-flow:column;
+    position:sticky;
+    top:0;
+    z-index:18;              /* above events, below sticky time */
+    background:var(--head);
+    border-bottom:1px solid var(--line);
   }
-  .sheet h3{margin:0 0 4px 0}
-  .sheet .meta{color:var(--muted);font-size:13px;margin-bottom:10px}
-  .sheet .desc{white-space:pre-wrap;word-wrap:break-word}
-  .sheet a{color:#0a58ca;text-decoration:underline;word-break:break-word}
-  .sheet .close{position:sticky;top:0;display:flex;justify-content:flex-end;margin:-16px -16px 8px 0;padding:8px}
-  .sheet .close button{border-radius:8px}
 
+  /* Show only one header depending on viewport */
   @media (max-width:640px){
-    .cols,.headCols{grid-auto-columns:minmax(120px,1fr)}
-    .event{font-size:12px}
+    .head .headCols{display:none}       /* hide old header row on phones */
+    .cols{grid-auto-columns:minmax(120px,1fr)}
+  }
+  @media (min-width:641px){
+    .floatHeadCols{display:none}        /* hide in-scroller header on larger screens */
   }
 </style>
 </head>
@@ -101,14 +105,18 @@
 
 <div class="wrap">
   <div class="sched">
+    <!-- Desktop/tablet header -->
     <div class="head">
       <div class="timeHead">Time</div>
       <div id="headCols" class="headCols"></div>
     </div>
+
+    <!-- Scroller with frozen header INSIDE it for phones -->
     <div id="body" class="body" style="--hourPx:60px">
       <div class="timeRail">
         <div id="timeRailInner" class="timeRailInner"></div>
       </div>
+      <div id="floatHeadCols" class="floatHeadCols"></div>
       <div id="cols" class="cols"></div>
     </div>
   </div>
@@ -145,7 +153,7 @@ const nonEmpty=s=>s && String(s).trim().length>0;
 function showError(msg){ const box=document.getElementById("err"); box.style.display="block"; box.textContent=msg; }
 function clearError(){ const box=document.getElementById("err"); box.style.display="none"; box.textContent=""; }
 
-/* Make URLs clickable in the sheet */
+/* linkify for sheet */
 function linkify(text){
   if(!text) return "";
   const urlRe = /(https?:\/\/[^\s<>()]+)|((?:www\.)[^\s<>()]+)/gi;
@@ -155,7 +163,7 @@ function linkify(text){
   });
 }
 
-/* ---------- Division helpers (unchanged) ---------- */
+/* Division helpers (unchanged from your version) */
 function normalizeDivision(s){
   if(!s) return "";
   s = s.replace(/[–—]/g,'-').replace(/\s+/g,' ').trim();
@@ -199,7 +207,7 @@ function resolveDivisionFrom(title, desc, scheduleRaw){
   const fromTitle=detectDivisionAnywhere(title); return fromTitle||"";
 }
 
-/* ---------- Field helpers ---------- */
+/* Field helpers */
 function fieldFromDescription(desc){ if(!desc) return ""; const parts=desc.split(">").map(s=>s.trim()).filter(Boolean); return parts.length?parts[parts.length-1]:""; }
 function guessFieldFromText(title, location){
   const hay=(title||"")+" | "+(location||""); let m;
@@ -213,11 +221,11 @@ function guessFieldFromText(title, location){
 }
 function smartSort(a,b){ const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/); return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)]; }; const ka=key(a), kb=key(b); return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1); }
 
-/* ====== Field colors ====== */
+/* Field colors */
 const FIELD_PALETTE=['#0ea5e9','#ef4444','#10b981','#6366f1','#f59e0b','#14b8a6','#6d28d9','#84cc16','#f97316','#1f7a8c','#e11d48','#22c55e'];
 function colorForField(name){ if(!name) return '#3b82f6'; let h=0; for(let i=0;i<name.length;i++) h=(h*31 + name.charCodeAt(i))>>>0; return FIELD_PALETTE[h % FIELD_PALETTE.length]; }
 
-/* ====== Fetch from proxy ====== */
+/* Fetch */
 async function fetchEvents(){
   clearError(); const statusEl=document.getElementById("status"); statusEl.textContent="Loading…";
   try{
@@ -250,7 +258,7 @@ async function fetchEvents(){
   }catch(err){ console.error(err); showError("JavaScript error: "+err.message); document.getElementById("status").textContent="Error."; }
 }
 
-/* ====== UI ====== */
+/* UI */
 function populateFilters(){
   const $f=document.getElementById("fieldFilter");
   $f.innerHTML='<option value="">All Fields</option>'+fields.map(f=>`<option>${f}</option>`).join("");
@@ -259,7 +267,7 @@ function populateFilters(){
   $d.innerHTML='<option value="">All Divisions</option>'+divisions.map(d=>`<option>${d}</option>`).join("");
 }
 
-/* Overlap layout per field */
+/* Overlap layout */
 function layoutLevels(events){
   const levels=[]; const placed=[];
   events.sort((a,b)=>a.s-b.s).forEach(ev=>{
@@ -269,39 +277,7 @@ function layoutLevels(events){
   return { placed, levelCount: Math.max(1, levels.length) };
 }
 
-/* ===== Header sync for mobile (fix) ===== */
-function setHeaderX(x){
-  document.getElementById('headCols').style.transform = `translate3d(${x}px,0,0)`;
-}
-function syncHeaderSizes(){
-  const cols = document.getElementById('cols');
-  const headCols = document.getElementById('headCols');
-  headCols.style.width = cols.scrollWidth + 'px';
-}
-function installHeaderScrollSync(){
-  const bodyEl = document.getElementById('body');
-
-  // initial
-  setHeaderX(-bodyEl.scrollLeft);
-
-  let ticking = false;
-  const update = () => {
-    setHeaderX(-bodyEl.scrollLeft);
-    ticking = false;
-  };
-  const onScroll = () => {
-    if (!ticking) {
-      ticking = true;
-      requestAnimationFrame(update);
-    }
-  };
-
-  ['scroll','touchstart','touchmove','wheel'].forEach(evt=>{
-    bodyEl.addEventListener(evt, onScroll, { passive:true });
-  });
-}
-
-/* ====== Render ====== */
+/* Render */
 function render(){
   const iso=localYMD(currentDay);
   const fieldFilter=document.getElementById("fieldFilter").value;
@@ -320,12 +296,16 @@ function render(){
 
   const colsList = fieldFilter ? [fieldFilter] : fields.slice();
 
-  const headCols = document.getElementById("headCols");
-  headCols.innerHTML = colsList.map(f=>{
+  /* Build both headers (desktop + the “frozen” one inside scroller) */
+  const makeHeads = list => list.map(f=>{
     const c = colorForField(f);
     return `<div class="colHead" style="background:${c};color:#fff">${f}</div>`;
   }).join("");
 
+  document.getElementById("headCols").innerHTML = makeHeads(colsList);
+  document.getElementById("floatHeadCols").innerHTML = makeHeads(colsList);
+
+  /* Time rail */
   const hourPx = 60*PX_PER_MIN;
   document.getElementById("body").style.setProperty('--hourPx', hourPx+'px');
   const railInner=document.getElementById("timeRailInner");
@@ -340,6 +320,7 @@ function render(){
     }
   }
 
+  /* Columns + events */
   const cols = document.getElementById("cols");
   cols.style.gridAutoColumns = 'minmax(140px,1fr)';
   cols.innerHTML = "";
@@ -393,10 +374,6 @@ function render(){
     cols.appendChild(col);
   });
 
-  /* —— critical: make widths match and tie header to scroll —— */
-  syncHeaderSizes();
-  installHeaderScrollSync();
-
   adjustGridHeight();
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
@@ -409,7 +386,7 @@ function adjustGridHeight(){
   document.getElementById('body').style.height = Math.max(240, window.innerHeight - totalOffset) + 'px';
 }
 
-/* ====== Details Sheet ====== */
+/* Details sheet */
 const sheet = document.getElementById('sheet');
 const sheetBack = document.getElementById('sheetBack');
 const sheetClose = document.getElementById('sheetClose');
@@ -433,7 +410,7 @@ function closeSheet(){ sheet.style.display='none'; sheetBack.style.display='none
 sheetBack.addEventListener('click', closeSheet);
 sheetClose.addEventListener('click', closeSheet);
 
-/* ====== Navigation ====== */
+/* Navigation */
 function jumpToGame(next=true){
   if(!gameDates.length)return;
   const iso=localYMD(currentDay);
@@ -441,7 +418,7 @@ function jumpToGame(next=true){
   else{const prev=[...gameDates].reverse().find(d=>d<iso);if(prev){currentDay=new Date(prev+"T12:00:00");document.getElementById("picker").value=prev;render();}}
 }
 
-/* ====== Wire up ====== */
+/* Wire up */
 document.getElementById("picker").value=localYMD(currentDay);
 document.getElementById("prevDay").onclick=()=>{ currentDay=addDays(currentDay,-1); document.getElementById("picker").value=localYMD(currentDay); render(); };
 document.getElementById("nextDay").onclick=()=>{ currentDay=addDays(currentDay, 1); document.getElementById("picker").value=localYMD(currentDay); render(); };
@@ -451,9 +428,9 @@ document.getElementById("nextGame").onclick=()=> jumpToGame(true);
 document.getElementById("fieldFilter").onchange=render;
 document.getElementById("divisionFilter").onchange=render;
 document.getElementById("picker").onchange = e=>{ currentDay=new Date(e.target.value+"T12:00:00"); render(); };
-window.addEventListener('resize', ()=>{ syncHeaderSizes(); adjustGridHeight(); });
+window.addEventListener('resize', adjustGridHeight);
 
-/* ====== Init ====== */
+/* Init */
 fetchEvents();
 setInterval(fetchEvents, REFRESH_MS);
 </script>
