@@ -54,6 +54,8 @@
     position:absolute;left:0;right:6px;background:var(--fieldColor, #eef2ff);
     border-left:4px solid rgba(255,255,255,.35);
     border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;cursor:pointer;color:#fff;
+    z-index:5; /* ensure above grid/header paints */
+    pointer-events:auto;
   }
   .event .time{font-size:11px;opacity:.9;margin-bottom:2px}
   .event .title{font-weight:700}
@@ -61,7 +63,7 @@
   .event:focus{outline:2px solid rgba(255,255,255,.6)}
   .event[data-level]{right:auto}
 
-  /* Mobile: match column width to header, nothing hidden */
+  /* Mobile: match column width to header */
   @media (max-width: 640px){
     .cols, .headCols{grid-auto-columns:minmax(120px,1fr)}
     .event{font-size:12px}
@@ -111,7 +113,7 @@
 </div>
 
 <script>
-/* ====== Config (unchanged) ====== */
+/* ====== Config ====== */
 const PROXY_URL = "https://script.google.com/macros/s/AKfycbwENbf30hTrwGykGxdwZYyOo31eZG77D7mKjNsPy6cEBEwj6WwoLMGyJ15anbMVcxkF/exec";
 const START_HOUR = 7;
 const END_HOUR   = 22;
@@ -122,7 +124,7 @@ const REFRESH_MS = 60000;
 let currentDay = new Date();
 let allEvents = [], gameDates = [], fields = [];
 
-/* ====== Utils (unchanged) ====== */
+/* ====== Utils ====== */
 const pad=n=>String(n).padStart(2,"0");
 const localYMD=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const addDays=(d,n)=>{const x=new Date(d); x.setDate(d.getDate()+n); return x;};
@@ -175,23 +177,6 @@ function guessFieldFromText(title,location){
 function smartSort(a,b){ const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/); return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)]; }; const ka=key(a), kb=key(b); return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1); }
 const FIELD_PALETTE=['#0ea5e9','#ef4444','#10b981','#6366f1','#f59e0b','#14b8a6','#6d28d9','#84cc16','#f97316','#1f7a8c','#e11d48','#22c55e'];
 function colorForField(name){ if(!name) return '#3b82f6'; let h=0; for(let i=0;i<name.length;i++) h=(h*31 + name.charCodeAt(i))>>>0; return FIELD_PALETTE[h % FIELD_PALETTE.length]; }
-
-/* ---- Mobile-safe tap helper (does not affect scroll) ---- */
-function addMobileTap(el, cb){
-  let sx=0, sy=0, t0=0;
-  const THRESH=8, TIME=350;
-  el.addEventListener('touchstart', (e)=>{
-    const t=e.changedTouches[0]; sx=t.clientX; sy=t.clientY; t0=Date.now();
-  }, {passive:true});
-  el.addEventListener('touchend', (e)=>{
-    const t=e.changedTouches[0];
-    const dx=Math.abs(t.clientX-sx), dy=Math.abs(t.clientY-sy);
-    if(dx<THRESH && dy<THRESH && (Date.now()-t0)<TIME){
-      e.preventDefault();  // treat as a tap, not a fling
-      cb();
-    }
-  }, {passive:false});
-}
 
 /* Fetch */
 async function fetchEvents(){
@@ -327,7 +312,6 @@ function render(){
       `;
       const open=()=>openSheet(ev);
       node.addEventListener('click', open);
-      addMobileTap(node, open);   // <- tap-to-open on phones, no layout changes
       node.addEventListener('keydown', e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); } });
       col.appendChild(node);
     });
@@ -335,7 +319,7 @@ function render(){
     cols.appendChild(col);
   });
 
-  /* Header scroll-sync for ALL breakpoints */
+  /* Header scroll-sync */
   const bodyEl=document.getElementById("body");
   bodyEl.onscroll = () => {
     headCols.style.transform = `translateX(${-bodyEl.scrollLeft}px)`;
@@ -353,7 +337,7 @@ function adjustGridHeight(){
   document.getElementById('body').style.height=Math.max(240, window.innerHeight-totalOffset)+'px';
 }
 
-/* Sheet (unchanged) */
+/* Sheet */
 const sheet=document.getElementById('sheet');
 const sheetBack=document.getElementById('sheetBack');
 const sheetClose=document.getElementById('sheetClose');
@@ -369,7 +353,7 @@ function closeSheet(){ sheet.style.display='none'; sheetBack.style.display='none
 sheetBack.addEventListener('click', closeSheet);
 sheetClose.addEventListener('click', closeSheet);
 
-/* Navigation (unchanged) */
+/* Navigation */
 function jumpToGame(next=true){
   if(!gameDates.length)return;
   const iso=localYMD(currentDay);
