@@ -21,7 +21,7 @@
   /* Schedule shell */
   .sched{background:var(--card);border:1px solid var(--line);box-shadow:0 2px 6px rgba(0,0,0,.06)}
 
-  /* Sticky top header (time label + scrolling field headers) */
+  /* Single sticky header for all breakpoints */
   .head{position:sticky;top:54px;z-index:20;display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--head);overflow:hidden}
   .timeHead{flex:0 0 82px;display:flex;align-items:center;justify-content:center;font-weight:700;border-right:1px solid var(--line);background:#fbfbff;position:sticky;left:0;z-index:25}
   .headCols{display:grid;grid-auto-columns:minmax(140px,1fr);grid-auto-flow:column;will-change:transform}
@@ -30,12 +30,11 @@
   /* Grid scroller */
   .body{
     display:flex;align-items:stretch;position:relative;
-    overflow-x:auto;              /* horizontal scroll */
-    overflow-y:auto;              /* vertical scroll inside grid */
+    overflow-x:auto;overflow-y:auto;
     -webkit-overflow-scrolling:touch;
     overscroll-behavior:contain;
     touch-action:pan-x pan-y;
-    height: 60vh;                 /* JS will refine height */
+    height:60vh;
   }
   .timeRail{flex:0 0 82px;position:sticky;left:0;z-index:15;border-right:1px solid var(--line);background:#fbfbff}
   .timeRailInner{position:relative}
@@ -52,11 +51,9 @@
   }
 
   .event{
-    position:absolute;left:0;right:6px;
-    background:var(--fieldColor, #eef2ff); /* colored per field */
+    position:absolute;left:0;right:6px;background:var(--fieldColor, #eef2ff);
     border-left:4px solid rgba(255,255,255,.35);
-    border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;cursor:pointer;
-    color:#fff;
+    border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;cursor:pointer;color:#fff;
   }
   .event .time{font-size:11px;opacity:.9;margin-bottom:2px}
   .event .title{font-weight:700}
@@ -64,21 +61,7 @@
   .event:focus{outline:2px solid rgba(255,255,255,.6)}
   .event[data-level]{right:auto}
 
-  /* Details sheet (modal) */
-  .sheetBack{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:50}
-  .sheet{
-    position:fixed;left:50%;transform:translateX(-50%);bottom:0;right:0;max-width:720px;
-    background:#fff;border-top-left-radius:16px;border-top-right-radius:16px;
-    box-shadow:0 -8px 24px rgba(0,0,0,.2);padding:16px;z-index:60;display:none;
-    max-height:80vh;overflow:auto;-webkit-overflow-scrolling:touch;
-  }
-  .sheet h3{margin:0 0 4px 0}
-  .sheet .meta{color:var(--muted);font-size:13px;margin-bottom:10px}
-  .sheet .desc{white-space:pre-wrap;word-wrap:break-word}
-  .sheet a{color:#0a58ca;text-decoration:underline;word-break:break-word}
-  .sheet .close{position:sticky;top:0;display:flex;justify-content:flex-end;margin:-16px -16px 8px 0;padding:8px}
-  .sheet .close button{border-radius:8px}
-
+  /* Mobile: match column width to header, nothing hidden */
   @media (max-width: 640px){
     .cols, .headCols{grid-auto-columns:minmax(120px,1fr)}
     .event{font-size:12px}
@@ -128,7 +111,7 @@
 </div>
 
 <script>
-/* ====== Config ====== */
+/* ====== Config (unchanged) ====== */
 const PROXY_URL = "https://script.google.com/macros/s/AKfycbwENbf30hTrwGykGxdwZYyOo31eZG77D7mKjNsPy6cEBEwj6WwoLMGyJ15anbMVcxkF/exec";
 const START_HOUR = 7;
 const END_HOUR   = 22;
@@ -139,7 +122,7 @@ const REFRESH_MS = 60000;
 let currentDay = new Date();
 let allEvents = [], gameDates = [], fields = [];
 
-/* ====== Utils ====== */
+/* ====== Utils (unchanged) ====== */
 const pad=n=>String(n).padStart(2,"0");
 const localYMD=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const addDays=(d,n)=>{const x=new Date(d); x.setDate(d.getDate()+n); return x;};
@@ -148,151 +131,90 @@ const uniq=arr=>[...new Set(arr)];
 const nonEmpty=s=>s && String(s).trim().length>0;
 function showError(msg){ const box=document.getElementById("err"); box.style.display="block"; box.textContent=msg; }
 function clearError(){ const box=document.getElementById("err"); box.style.display="none"; box.textContent=""; }
-
-/* Make URLs clickable in the sheet */
 function linkify(text){
   if(!text) return "";
-  const urlRe = /(https?:\/\/[^\s<>()]+)|((?:www\.)[^\s<>()]+)/gi;
-  return text.replace(urlRe,(m)=>{
-    const url = m.startsWith('http') ? m : `http://${m}`;
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${m}</a>`;
-  });
+  const urlRe=/(https?:\/\/[^\s<>()]+)|((?:www\.)[^\s<>()]+)/gi;
+  return text.replace(urlRe,(m)=>{const url=m.startsWith('http')?m:`http://${m}`;return `<a href="${url}" target="_blank" rel="noopener noreferrer">${m}</a>`;});
 }
 
-/* ---------- Division / Schedule helpers ---------- */
-function normalizeDivision(s){
-  if(!s) return "";
-  s = s.replace(/[–—]/g,'-').replace(/\s+/g,' ').trim();
-
-  let m = /^(\d{1,2})\s*[Uu]\b(?:\s*(AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?$/i.exec(s);
-  if(m){
-    const age = +m[1];
-    if(age>=4 && age<=18) return `${age}U${m[2] ? ' ' + m[2].toUpperCase() : ''}`;
-    return "";
-  }
-
-  m = /^(\d{1,2})\s*[\/-]\s*(\d{1,2})\s*(?:([Aa]{1,3}|[ABC]))?(?:\s*(American|National|Gold|Silver|Bronze))?$/i.exec(s);
-  if(m){
-    const a = +m[1], b = +m[2];
-    if(a>=7 && a<=18 && b>=7 && b<=18){
-      const grade = m[3] ? ' ' + m[3].toUpperCase() : '';
-      const desc  = m[4] ? ' ' + m[4] : '';
-      return `${a}/${b}${grade}${desc}`.trim();
-    }
-    return "";
-  }
-
+/* Division + field helpers (unchanged) */
+function normalizeDivision(s){ if(!s) return ""; s=s.replace(/[–—]/g,'-').replace(/\s+/g,' ').trim();
+  let m=/^(\d{1,2})\s*[Uu]\b(?:\s*(AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?$/i.exec(s);
+  if(m){const age=+m[1]; if(age>=4&&age<=18) return `${age}U${m[2]?' '+m[2].toUpperCase():''}`; return "";}
+  m=/^(\d{1,2})\s*[\/-]\s*(\d{1,2})\s*(?:([Aa]{1,3}|[ABC]))?(?:\s*(American|National|Gold|Silver|Bronze))?$/i.exec(s);
+  if(m){const a=+m[1],b=+m[2]; if(a>=7&&a<=18&&b>=7&&b<=18){const g=m[3]?(' '+m[3].toUpperCase()):''; const d=m[4]?(' '+m[4]):''; return `${a}/${b}${g}${d}`.trim();} return "";}
   return "";
 }
-
 function scheduleFromEvent(ev){
-  const keys = [
-    'schedule','scheduleName','schedule_name',
-    'division','divisionName',
-    'calendar','calendarName','calendarSummary',
-    'calendar_title','calendarTitle','league','ageDivision'
-  ];
-  for(const k of keys){
-    if(k in ev){
-      const v = ev[k];
-      if(typeof v === 'string' && v.trim()) return v.trim();
-      if(v && typeof v === 'object'){
-        for(const nk of ['summary','name','title']){
-          if(typeof v[nk] === 'string' && v[nk].trim()) return v[nk].trim();
-        }
-      }
-    }
-  }
+  const keys=['schedule','scheduleName','schedule_name','division','divisionName','calendar','calendarName','calendarSummary','calendar_title','calendarTitle','league','ageDivision'];
+  for(const k of keys){ if(k in ev){ const v=ev[k]; if(typeof v==='string'&&v.trim()) return v.trim(); if(v&&typeof v==='object'){ for(const nk of ['summary','name','title']){ if(typeof v[nk]==='string'&&v[nk].trim()) return v[nk].trim(); } } } }
   return '';
 }
-
 function detectDivisionAnywhere(text){
-  if(!text) return "";
-  const norm = text.replace(/[–—]/g,'-');
-
-  const cands = [];
-  let m;
-
-  const broadSlash = /(\d{1,2}\s*[\/-]\s*\d{1,2}\s*(?:[Aa]{1,3}|[ABC])?(?:\s*(?:American|National|Gold|Silver|Bronze))?)/ig;
-  while((m=broadSlash.exec(norm))) cands.push(m[1]);
-
-  const broadU = /(\d{1,2}\s*[Uu](?:\s*(?:AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?)/ig;
-  while((m=broadU.exec(norm))) cands.push(m[1]);
-
-  const val = cands.map(normalizeDivision).filter(Boolean);
-  if(!val.length) return "";
-  val.sort((a,b)=>b.length-a.length);
-  return val[0];
+  if(!text) return ""; const norm=text.replace(/[–—]/g,'-'); const cands=[]; let m;
+  const re1=/(\d{1,2}\s*[\/-]\s*\d{1,2}\s*(?:[Aa]{1,3}|[ABC])?(?:\s*(?:American|National|Gold|Silver|Bronze))?)/ig; while((m=re1.exec(norm))) cands.push(m[1]);
+  const re2=/(\d{1,2}\s*[Uu](?:\s*(?:AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?)/ig; while((m=re2.exec(norm))) cands.push(m[1]);
+  const val=cands.map(normalizeDivision).filter(Boolean); if(!val.length) return ""; val.sort((a,b)=>b.length-a.length); return val[0];
 }
-
-function resolveDivisionFrom(title, desc, scheduleRaw){
-  if(scheduleRaw){
-    const n = normalizeDivision(scheduleRaw) || scheduleRaw.trim();
-    if(n) return n;
-  }
-  const fromDesc = detectDivisionAnywhere(desc);
-  if(fromDesc) return fromDesc;
-  const fromTitle = detectDivisionAnywhere(title);
-  return fromTitle || "";
+function resolveDivisionFrom(title,desc,scheduleRaw){
+  if(scheduleRaw){const n=normalizeDivision(scheduleRaw)||scheduleRaw.trim(); if(n) return n;}
+  const d=detectDivisionAnywhere(desc); if(d) return d;
+  const t=detectDivisionAnywhere(title); return t||"";
 }
-
-/* ---------- Field helpers ---------- */
 function fieldFromDescription(desc){ if(!desc) return ""; const parts=desc.split(">").map(s=>s.trim()).filter(Boolean); return parts.length?parts[parts.length-1]:""; }
-function guessFieldFromText(title, location){
+function guessFieldFromText(title,location){
   const hay=(title||"")+" | "+(location||""); let m;
-  if (/\bpepper\b.*\bnorth\b/i.test(hay)) return "Pepper North";
-  if (/\bpepper\b.*\bsouth\b/i.test(hay)) return "Pepper South";
-  if (m=hay.match(/\bmcinnish\b.*\bfield\s*(\d{1,2})\b/i)) return `McInnish Baseball Field ${m[1]}`;
-  if (m=hay.match(/\bmac(arthur)?\b.*\b(\d{1,2})\b/i)) return `Mac ${m[2]}`;
-  if (/\brdl\b/i.test(hay)) return "RDL";
-  if (/\bjaycee\b/i.test(hay)) return "Jaycee Park";
+  if(/\bpepper\b.*\bnorth\b/i.test(hay)) return "Pepper North";
+  if(/\bpepper\b.*\bsouth\b/i.test(hay)) return "Pepper South";
+  if(m=hay.match(/\bmcinnish\b.*\bfield\s*(\d{1,2})\b/i)) return `McInnish Baseball Field ${m[1]}`;
+  if(m=hay.match(/\bmac(arthur)?\b.*\b(\d{1,2})\b/i)) return `Mac ${m[2]}`;
+  if(/\brdl\b/i.test(hay)) return "RDL";
+  if(/\bjaycee\b/i.test(hay)) return "Jaycee Park";
   return (location||"").split(",")[0].trim();
 }
 function smartSort(a,b){ const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d+))?$/); return [(m?.[1]||s).trim().toLowerCase(), Number(m?.[2]||0)]; }; const ka=key(a), kb=key(b); return ka[0]===kb[0]? ka[1]-kb[1] : (ka[0]<kb[0]? -1:1); }
+const FIELD_PALETTE=['#0ea5e9','#ef4444','#10b981','#6366f1','#f59e0b','#14b8a6','#6d28d9','#84cc16','#f97316','#1f7a8c','#e11d48','#22c55e'];
+function colorForField(name){ if(!name) return '#3b82f6'; let h=0; for(let i=0;i<name.length;i++) h=(h*31 + name.charCodeAt(i))>>>0; return FIELD_PALETTE[h % FIELD_PALETTE.length]; }
 
-/* ====== Field colors (deterministic) ====== */
-const FIELD_PALETTE = ['#0ea5e9','#ef4444','#10b981','#6366f1','#f59e0b','#14b8a6','#6d28d9','#84cc16','#f97316','#1f7a8c','#e11d48','#22c55e'];
-function colorForField(name){
-  if(!name) return '#3b82f6';
-  let h=0; for(let i=0;i<name.length;i++) h=(h*31 + name.charCodeAt(i))>>>0;
-  return FIELD_PALETTE[h % FIELD_PALETTE.length];
+/* ---- Mobile-safe tap helper (does not affect scroll) ---- */
+function addMobileTap(el, cb){
+  let sx=0, sy=0, t0=0;
+  const THRESH=8, TIME=350;
+  el.addEventListener('touchstart', (e)=>{
+    const t=e.changedTouches[0]; sx=t.clientX; sy=t.clientY; t0=Date.now();
+  }, {passive:true});
+  el.addEventListener('touchend', (e)=>{
+    const t=e.changedTouches[0];
+    const dx=Math.abs(t.clientX-sx), dy=Math.abs(t.clientY-sy);
+    if(dx<THRESH && dy<THRESH && (Date.now()-t0)<TIME){
+      e.preventDefault();  // treat as a tap, not a fling
+      cb();
+    }
+  }, {passive:false});
 }
 
-/* ====== Tap helper: reliable on iOS (adds touchend + prevents ghost click) ====== */
-function addTapAndClick(el, handler){
-  el.addEventListener('click', handler);
-  el.addEventListener('touchend', (e) => {
-    e.preventDefault();   // treat as a tap, not a scroll fling
-    handler();
-  }, { passive: false });
-}
-
-/* ====== Fetch from proxy ====== */
+/* Fetch */
 async function fetchEvents(){
   clearError(); const statusEl=document.getElementById("status"); statusEl.textContent="Loading…";
   try{
     const now=new Date();
     const min=new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
     const max=new Date(now.getFullYear()+1, now.getMonth(), now.getDate());
-    const url = `${PROXY_URL}?timeMin=${encodeURIComponent(min.toISOString())}&timeMax=${encodeURIComponent(max.toISOString())}`;
-    const res = await fetch(url);
+    const url=`${PROXY_URL}?timeMin=${encodeURIComponent(min.toISOString())}&timeMax=${encodeURIComponent(max.toISOString())}`;
+    const res=await fetch(url);
     if(!res.ok){ showError(`Proxy error (${res.status}).`); statusEl.textContent="Proxy error."; return; }
-    const data = await res.json();
+    const data=await res.json();
     if(!data || !Array.isArray(data.items)){ showError("Proxy returned unexpected data."); statusEl.textContent="Bad data."; return; }
 
     allEvents = data.items.map(ev=>{
-      const start = ev.start ? new Date(ev.start) : null;
-      const end   = ev.end   ? new Date(ev.end)   : start;
-      const title = ev.title || "", loc = ev.location || "", desc = ev.description || "";
-
-      const schedule = (ev.schedule || "").trim();
-      const div = schedule || resolveDivisionFrom(title, desc, schedule);
-
-      let field = fieldFromDescription(desc);
-      if (!field) field = guessFieldFromText(title, loc);
-
-      return { s:start, e:end, t:title, l:loc, desc, div, field, schedule, calendarName: ev.calendarName || "" };
-    }).filter(e => e.s && e.e);
+      const start=ev.start?new Date(ev.start):null;
+      const end  =ev.end  ?new Date(ev.end)  :start;
+      const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
+      const schedule=(ev.schedule||"").trim();
+      const div=schedule || resolveDivisionFrom(title,desc,schedule);
+      let field=fieldFromDescription(desc); if(!field) field=guessFieldFromText(title,loc);
+      return { s:start, e:end, t:title, l:loc, desc, div, field, schedule, calendarName:ev.calendarName||"" };
+    }).filter(e=>e.s && e.e);
 
     fields = uniq(allEvents.map(e=>e.field).filter(nonEmpty)).sort(smartSort);
     gameDates = uniq(allEvents.map(e=>localYMD(e.s))).sort();
@@ -303,7 +225,7 @@ async function fetchEvents(){
   }catch(err){ console.error(err); showError("JavaScript error: "+err.message); document.getElementById("status").textContent="Error."; }
 }
 
-/* ====== UI ====== */
+/* UI */
 function populateFilters(){
   const $f=document.getElementById("fieldFilter");
   $f.innerHTML='<option value="">All Fields</option>'+fields.map(f=>`<option>${f}</option>`).join("");
@@ -312,7 +234,7 @@ function populateFilters(){
   $d.innerHTML='<option value="">All Divisions</option>'+divisions.map(d=>`<option>${d}</option>`).join("");
 }
 
-/* Overlap layout per field */
+/* Placement */
 function layoutLevels(events){
   const levels=[]; const placed=[];
   events.sort((a,b)=>a.s-b.s).forEach(ev=>{
@@ -322,7 +244,7 @@ function layoutLevels(events){
   return { placed, levelCount: Math.max(1, levels.length) };
 }
 
-/* ====== Render ====== */
+/* Render */
 function render(){
   const iso=localYMD(currentDay);
   const fieldFilter=document.getElementById("fieldFilter").value;
@@ -341,19 +263,19 @@ function render(){
 
   const colsList = fieldFilter ? [fieldFilter] : fields.slice();
 
-  /* Sticky header field labels (color-coded) */
+  /* Build sticky header labels (color-coded) */
   const headCols = document.getElementById("headCols");
   headCols.innerHTML = colsList.map(f=>{
-    const c = colorForField(f);
+    const c=colorForField(f);
     return `<div class="colHead" style="background:${c};color:#fff">${f}</div>`;
   }).join("");
 
   /* Time rail */
-  const hourPx = 60*PX_PER_MIN;
+  const hourPx=60*PX_PER_MIN;
   document.getElementById("body").style.setProperty('--hourPx', hourPx+'px');
   const railInner=document.getElementById("timeRailInner");
-  railInner.style.height = (PX_PER_MIN*totalMin) + "px";
-  railInner.innerHTML = "";
+  railInner.style.height=(PX_PER_MIN*totalMin)+"px";
+  railInner.innerHTML="";
   for(let h=START_HOUR; h<=END_HOUR; h++){
     const y=(h-START_HOUR)*hourPx;
     railInner.insertAdjacentHTML("beforeend", `<div class="timeTick" style="top:${y}px"></div>`);
@@ -364,105 +286,90 @@ function render(){
   }
 
   /* Columns + events */
-  const cols = document.getElementById("cols");
-  cols.style.gridAutoColumns = 'minmax(140px,1fr)';
-  cols.innerHTML = "";
+  const cols=document.getElementById("cols");
+  const colW = window.matchMedia('(max-width: 640px)').matches ? 'minmax(120px,1fr)' : 'minmax(140px,1fr)';
+  cols.style.gridAutoColumns = colW;
+  cols.innerHTML="";
   colsList.forEach(field=>{
     const col=document.createElement('div');
     col.className='col';
-    col.style.height = (PX_PER_MIN*totalMin) + "px";
+    col.style.height=(PX_PER_MIN*totalMin)+"px";
+    col.style.setProperty('--fieldColor', colorForField(field));
 
-    const fieldColor = colorForField(field);
-    col.style.setProperty('--fieldColor', fieldColor);
-
-    const es = dayEvents.filter(e=>e.field===field).map(e=>{
-      const s = new Date(Math.max(e.s, dayStart));
-      const eEnd = new Date(Math.min(e.e, dayEnd));
+    const es=dayEvents.filter(e=>e.field===field).map(e=>{
+      const s=new Date(Math.max(e.s,dayStart));
+      const eEnd=new Date(Math.min(e.e,dayEnd));
       return {...e, s, e:eEnd};
     }).filter(e=>e.e>e.s);
 
-    const { placed, levelCount } = layoutLevels(es);
+    const {placed, levelCount}=layoutLevels(es);
 
     placed.forEach(({ev, level})=>{
-      const topMin  = (ev.s - dayStart)/60000;
-      const endMin  = (ev.e - dayStart)/60000;
-      const topPx   = Math.round(topMin * PX_PER_MIN * 10) / 10;
-      const height  = Math.max(2, Math.round((endMin - topMin) * PX_PER_MIN * 10) / 10);
-
+      const topMin=(ev.s-dayStart)/60000;
+      const endMin=(ev.e-dayStart)/60000;
+      const topPx=Math.round(topMin*PX_PER_MIN*10)/10;
+      const height=Math.max(2, Math.round((endMin-topMin)*PX_PER_MIN*10)/10);
       const gap=4, widthPct=100/levelCount, leftPct=widthPct*level;
 
       const node=document.createElement('div');
       node.className='event';
-      node.style.top = topPx+'px';
-      node.style.height = height+'px';
-      node.style.left = `calc(${leftPct}% + ${gap/2}px)`;
-      node.style.width = `calc(${widthPct}% - ${gap}px)`;
+      node.style.top=topPx+'px';
+      node.style.height=height+'px';
+      node.style.left=`calc(${leftPct}% + ${gap/2}px)`;
+      node.style.width=`calc(${widthPct}% - ${gap}px)`;
       node.setAttribute('data-level', level);
       node.setAttribute('tabindex','0');
-      node.title = (ev.l||"").replace(/\s+/g," ").trim();
-
-      node.innerHTML = `
+      node.title=(ev.l||"").replace(/\s+/g," ").trim();
+      node.innerHTML=`
         <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
         <div class="title">${ev.t}</div>
         ${ev.div ? `<div class="muted">${ev.div}</div>` : ""}
       `;
-
-      // MOBILE-RELIABLE TAP + normal click
-      addTapAndClick(node, () => openSheet(ev));
-      // Keyboard accessibility
-      node.addEventListener('keydown', (e)=>{
-        if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openSheet(ev); }
-      });
-
+      const open=()=>openSheet(ev);
+      node.addEventListener('click', open);
+      addMobileTap(node, open);   // <- tap-to-open on phones, no layout changes
+      node.addEventListener('keydown', e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); open(); } });
       col.appendChild(node);
     });
 
     cols.appendChild(col);
   });
 
-  /* Sync header scroll with body (field names move with columns) */
+  /* Header scroll-sync for ALL breakpoints */
   const bodyEl=document.getElementById("body");
-  bodyEl.onscroll = () => { headCols.style.transform = `translateX(${-bodyEl.scrollLeft}px)`; };
+  bodyEl.onscroll = () => {
+    headCols.style.transform = `translateX(${-bodyEl.scrollLeft}px)`;
+  };
 
   adjustGridHeight();
-
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
 
-/* Fit grid to viewport so vertical scroll stays inside the table */
+/* Fit grid to viewport */
 function adjustGridHeight(){
-  const headerH = document.querySelector('header')?.offsetHeight || 0;
-  const headH   = document.querySelector('.head')?.offsetHeight || 0;
-  const totalOffset = headerH + headH + 24;
-  document.getElementById('body').style.height = Math.max(240, window.innerHeight - totalOffset) + 'px';
+  const headerH=document.querySelector('header')?.offsetHeight||0;
+  const headH=document.querySelector('.head')?.offsetHeight||0;
+  const totalOffset=headerH+headH+24;
+  document.getElementById('body').style.height=Math.max(240, window.innerHeight-totalOffset)+'px';
 }
 
-/* ====== Details Sheet ====== */
-const sheet = document.getElementById('sheet');
-const sheetBack = document.getElementById('sheetBack');
-const sheetClose = document.getElementById('sheetClose');
-
+/* Sheet (unchanged) */
+const sheet=document.getElementById('sheet');
+const sheetBack=document.getElementById('sheetBack');
+const sheetClose=document.getElementById('sheetClose');
 function openSheet(ev){
-  document.getElementById('sheetTitle').textContent = ev.t || '(No title)';
-  const metaParts = [
-    `${fmtTime(ev.s)} – ${fmtTime(ev.e)}`,
-    ev.field ? `• ${ev.field}` : '',
-    ev.div ? `• <strong>${ev.div}</strong>` : ''
-  ].filter(Boolean);
-  const locLine = ev.l ? `<br>Location: ${ev.l}` : '';
-  document.getElementById('sheetMeta').innerHTML = metaParts.join(' ') + locLine;
-  document.getElementById('sheetDesc').innerHTML = ev.desc ? linkify(ev.desc) : '<span class="muted">No description.</span>';
-
-  sheetBack.style.display='block';
-  sheet.style.display='block';
-  sheet.scrollTop = 0;
-  sheet.focus();
+  document.getElementById('sheetTitle').textContent=ev.t||'(No title)';
+  const metaParts=[`${fmtTime(ev.s)} – ${fmtTime(ev.e)}`, ev.field?`• ${ev.field}`:'', ev.div?`• <strong>${ev.div}</strong>`:''].filter(Boolean);
+  const locLine=ev.l?`<br>Location: ${ev.l}`:'';
+  document.getElementById('sheetMeta').innerHTML=metaParts.join(' ')+locLine;
+  document.getElementById('sheetDesc').innerHTML=ev.desc?linkify(ev.desc):'<span class="muted">No description.</span>';
+  sheetBack.style.display='block'; sheet.style.display='block'; sheet.focus();
 }
 function closeSheet(){ sheet.style.display='none'; sheetBack.style.display='none'; }
 sheetBack.addEventListener('click', closeSheet);
 sheetClose.addEventListener('click', closeSheet);
 
-/* ====== Navigation ====== */
+/* Navigation (unchanged) */
 function jumpToGame(next=true){
   if(!gameDates.length)return;
   const iso=localYMD(currentDay);
@@ -470,7 +377,7 @@ function jumpToGame(next=true){
   else{const prev=[...gameDates].reverse().find(d=>d<iso);if(prev){currentDay=new Date(prev+"T12:00:00");document.getElementById("picker").value=prev;render();}}
 }
 
-/* ====== Wire up ====== */
+/* Wire up */
 document.getElementById("picker").value=localYMD(currentDay);
 document.getElementById("prevDay").onclick=()=>{ currentDay=addDays(currentDay,-1); document.getElementById("picker").value=localYMD(currentDay); render(); };
 document.getElementById("nextDay").onclick=()=>{ currentDay=addDays(currentDay, 1); document.getElementById("picker").value=localYMD(currentDay); render(); };
@@ -482,7 +389,7 @@ document.getElementById("divisionFilter").onchange=render;
 document.getElementById("picker").onchange = e=>{ currentDay=new Date(e.target.value+"T12:00:00"); render(); };
 window.addEventListener('resize', adjustGridHeight);
 
-/* ====== Init ====== */
+/* Init */
 fetchEvents();
 setInterval(fetchEvents, REFRESH_MS);
 </script>
