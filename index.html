@@ -54,7 +54,7 @@
     position:absolute;left:0;right:6px;background:var(--fieldColor, #eef2ff);
     border-left:4px solid rgba(255,255,255,.35);
     border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;cursor:pointer;color:#fff;
-    z-index:5; /* sit above grid paint so it’s always tappable */
+    z-index:5;
   }
   .event .time{font-size:11px;opacity:.9;margin-bottom:2px}
   .event .title{font-weight:700}
@@ -62,10 +62,8 @@
   .event:focus{outline:2px solid rgba(255,255,255,.6)}
   .event[data-level]{right:auto}
 
-  /* Details sheet (modal) — restored */
-  .sheetBack{
-    position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:50;
-  }
+  /* Details sheet (modal) */
+  .sheetBack{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:50}
   .sheet{
     position:fixed;left:50%;transform:translateX(-50%);bottom:0;right:0;max-width:720px;
     background:#fff;border-top-left-radius:16px;border-top-right-radius:16px;
@@ -79,7 +77,6 @@
   .sheet .close{position:sticky;top:0;display:flex;justify-content:flex-end;margin:-16px -16px 8px 0;padding:8px}
   .sheet .close button{border-radius:8px}
 
-  /* Mobile widths */
   @media (max-width: 640px){
     .cols, .headCols{grid-auto-columns:minmax(120px,1fr)}
     .event{font-size:12px}
@@ -136,6 +133,11 @@ const END_HOUR   = 22;
 const PX_PER_MIN = 1;
 const REFRESH_MS = 60000;
 
+/* === NEW: your Google Sheet (CSV) for team→division === */
+const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/15CnN0W-He1USh4vYeKiKNu4t0ySPgtEy_7UaGrO38CM/export?format=csv&gid=0";
+/* Cache the sheet in-memory for this page load only (simple + fast) */
+let TEAM_DIV_MAP = null;
+
 /* ====== State ====== */
 let currentDay = new Date();
 let allEvents = [], gameDates = [], fields = [];
@@ -155,18 +157,13 @@ function linkify(text){
   return text.replace(urlRe,(m)=>{const url=m.startsWith('http')?m:`http://${m}`;return `<a href="${url}" target="_blank" rel="noopener noreferrer">${m}</a>`;});
 }
 
-/* Division + field helpers */
+/* ====== Division helpers (existing fallback) ====== */
 function normalizeDivision(s){ if(!s) return ""; s=s.replace(/[–—]/g,'-').replace(/\s+/g,' ').trim();
   let m=/^(\d{1,2})\s*[Uu]\b(?:\s*(AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?$/i.exec(s);
   if(m){const age=+m[1]; if(age>=4&&age<=18) return `${age}U${m[2]?' '+m[2].toUpperCase():''}`; return "";}
   m=/^(\d{1,2})\s*[\/-]\s*(\d{1,2})\s*(?:([Aa]{1,3}|[ABC]))?(?:\s*(American|National|Gold|Silver|Bronze))?$/i.exec(s);
   if(m){const a=+m[1],b=+m[2]; if(a>=7&&a<=18&&b>=7&&b<=18){const g=m[3]?(' '+m[3].toUpperCase()):''; const d=m[4]?(' '+m[4]):''; return `${a}/${b}${g}${d}`.trim();} return "";}
   return "";
-}
-function scheduleFromEvent(ev){
-  const keys=['schedule','scheduleName','schedule_name','division','divisionName','calendar','calendarName','calendarSummary','calendar_title','calendarTitle','league','ageDivision'];
-  for(const k of keys){ if(k in ev){ const v=ev[k]; if(typeof v==='string'&&v.trim()) return v.trim(); if(v&&typeof v==='object'){ for(const nk of ['summary','name','title']){ if(typeof v[nk]==='string'&&v[nk].trim()) return v[nk].trim(); } } } }
-  return '';
 }
 function detectDivisionAnywhere(text){
   if(!text) return ""; const norm=text.replace(/[–—]/g,'-'); const cands=[]; let m;
@@ -179,6 +176,86 @@ function resolveDivisionFrom(title,desc,scheduleRaw){
   const d=detectDivisionAnywhere(desc); if(d) return d;
   const t=detectDivisionAnywhere(title); return t||"";
 }
+
+/* ====== NEW: Sheet → division logic ====== */
+/* Tiny CSV parser (quoted commas supported) */
+function parseCSV(text){
+  const rows=[]; let row=[],cell='',q=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i], n=text[i+1];
+    if(q){
+      if(c==='"' && n === '"'){ cell+='"'; i++; }
+      else if(c==='"'){ q=false; }
+      else { cell+=c; }
+    }else{
+      if(c==='"'){ q=true; }
+      else if(c===','){ row.push(cell); cell=''; }
+      else if(c==='\n'){ row.push(cell); rows.push(row); row=[]; cell=''; }
+      else if(c!=='\r'){ cell+=c; }
+    }
+  }
+  if (cell.length || row.length){ row.push(cell); rows.push(row); }
+  return rows;
+}
+
+/* Build {team → division} from your sheet (fetched once per page load) */
+async function ensureTeamMap(){
+  if (TEAM_DIV_MAP) return TEAM_DIV_MAP;
+  try{
+    const res = await fetch(SHEET_CSV_URL, { cache: 'no-store' });
+    if(!res.ok) throw new Error('Sheet CSV fetch '+res.status);
+    const csv = await res.text();
+    const rows = parseCSV(csv);
+    if(!rows.length) return TEAM_DIV_MAP = {};
+
+    const header = rows[0].map(h => String(h||'').trim());
+    const teamIdx = header.findIndex(h => /team/i.test(h));
+    const divIdx  = header.findIndex(h => /division/i.test(h));
+    if (teamIdx < 0 || divIdx < 0) return TEAM_DIV_MAP = {};
+
+    const map = {};
+    for(let i=1;i<rows.length;i++){
+      const team = String(rows[i][teamIdx]||'').trim();
+      const div  = String(rows[i][divIdx]||'').trim();
+      if(team && div) map[team.toLowerCase()] = div;
+    }
+    TEAM_DIV_MAP = map;
+    return map;
+  }catch(e){
+    console.warn('Team map failed:', e);
+    return TEAM_DIV_MAP = {};
+  }
+}
+
+/* Pull team names from common titles like:
+   "Warriors - 9/10A @ Greenhill Hornets 9U - Poynor" */
+function parseTeamsFromTitle(title){
+  if (!title) return [];
+  let s = title.replace(/\s+-\s+[^@]+$/,'').trim(); // drop trailing " - Field/Coach"
+  const parts = s.split(/\s+@\s+| vs\.? | v\.? /i);
+  if (parts.length === 1){
+    const p2 = s.split(/\s*-\s*/);
+    if (p2.length >= 2) parts[0] = p2[0], parts[1] = p2[1];
+  }
+  const clean = (t) => t
+    .replace(/\b(\d{1,2}\s*U|\d{1,2}\s*\/\s*\d{1,2}|AA|AAA|A|B|C|American|National|Gold|Silver|Bronze)\b/ig,'')
+    .replace(/\s{2,}/g,' ')
+    .trim();
+  if (parts.length >= 2) return [clean(parts[0]), clean(parts[1])].filter(Boolean);
+  return [clean(s)].filter(Boolean);
+}
+
+/* Use sheet map first; if no match, fall back to old logic */
+function divisionFromSheetOrFallback(title, desc, schedule){
+  const teams = parseTeamsFromTitle(title);
+  for (const t of teams){
+    const hit = TEAM_DIV_MAP && TEAM_DIV_MAP[t.toLowerCase()];
+    if (hit) return hit;
+  }
+  return schedule || resolveDivisionFrom(title, desc, schedule);
+}
+
+/* ---------- Field helpers ---------- */
 function fieldFromDescription(desc){ if(!desc) return ""; const parts=desc.split(">").map(s=>s.trim()).filter(Boolean); return parts.length?parts[parts.length-1]:""; }
 function guessFieldFromText(title,location){
   const hay=(title||"")+" | "+(location||""); let m;
@@ -194,26 +271,34 @@ function smartSort(a,b){ const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d
 const FIELD_PALETTE=['#0ea5e9','#ef4444','#10b981','#6366f1','#f59e0b','#14b8a6','#6d28d9','#84cc16','#f97316','#1f7a8c','#e11d48','#22c55e'];
 function colorForField(name){ if(!name) return '#3b82f6'; let h=0; for(let i=0;i<name.length;i++) h=(h*31 + name.charCodeAt(i))>>>0; return FIELD_PALETTE[h % FIELD_PALETTE.length]; }
 
-/* Fetch */
+/* ====== Fetch from proxy ====== */
 async function fetchEvents(){
   clearError(); const statusEl=document.getElementById("status"); statusEl.textContent="Loading…";
   try{
+    /* NEW: load team map once per page */
+    if (TEAM_DIV_MAP === null) { await ensureTeamMap(); }
+
     const now=new Date();
     const min=new Date(now.getFullYear()-1, now.getMonth(), now.getDate());
     const max=new Date(now.getFullYear()+1, now.getMonth(), now.getDate());
-    const url=`${PROXY_URL}?timeMin=${encodeURIComponent(min.toISOString())}&timeMax=${encodeURIComponent(max.toISOString())}`;
-    const res=await fetch(url);
+    const url = `${PROXY_URL}?timeMin=${encodeURIComponent(min.toISOString())}&timeMax=${encodeURIComponent(max.toISOString())}`;
+    const res = await fetch(url);
     if(!res.ok){ showError(`Proxy error (${res.status}).`); statusEl.textContent="Proxy error."; return; }
-    const data=await res.json();
+    const data = await res.json();
     if(!data || !Array.isArray(data.items)){ showError("Proxy returned unexpected data."); statusEl.textContent="Bad data."; return; }
 
     allEvents = data.items.map(ev=>{
       const start=ev.start?new Date(ev.start):null;
-      const end  =ev.end  ?new Date(ev.end)  :start;
+      const end  =ev.end?new Date(ev.end):start;
       const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
       const schedule=(ev.schedule||"").trim();
-      const div=schedule || resolveDivisionFrom(title,desc,schedule);
-      let field=fieldFromDescription(desc); if(!field) field=guessFieldFromText(title,loc);
+
+      /* NEW: division from your sheet first */
+      const div = divisionFromSheetOrFallback(title, desc, schedule);
+
+      let field=fieldFromDescription(desc);
+      if(!field) field=guessFieldFromText(title, loc);
+
       return { s:start, e:end, t:title, l:loc, desc, div, field, schedule, calendarName:ev.calendarName||"" };
     }).filter(e=>e.s && e.e);
 
@@ -226,7 +311,7 @@ async function fetchEvents(){
   }catch(err){ console.error(err); showError("JavaScript error: "+err.message); document.getElementById("status").textContent="Error."; }
 }
 
-/* UI */
+/* ====== UI ====== */
 function populateFilters(){
   const $f=document.getElementById("fieldFilter");
   $f.innerHTML='<option value="">All Fields</option>'+fields.map(f=>`<option>${f}</option>`).join("");
@@ -235,7 +320,7 @@ function populateFilters(){
   $d.innerHTML='<option value="">All Divisions</option>'+divisions.map(d=>`<option>${d}</option>`).join("");
 }
 
-/* Placement */
+/* Overlap layout per field */
 function layoutLevels(events){
   const levels=[]; const placed=[];
   events.sort((a,b)=>a.s-b.s).forEach(ev=>{
@@ -245,7 +330,7 @@ function layoutLevels(events){
   return { placed, levelCount: Math.max(1, levels.length) };
 }
 
-/* Render */
+/* ====== Render ====== */
 function render(){
   const iso=localYMD(currentDay);
   const fieldFilter=document.getElementById("fieldFilter").value;
@@ -339,7 +424,6 @@ function render(){
   const bodyEl=document.getElementById("body");
   bodyEl.onscroll = () => { headCols.style.transform = `translateX(${-bodyEl.scrollLeft}px)`; };
 
-  adjustGridHeight();
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
 
@@ -388,6 +472,7 @@ document.getElementById("picker").onchange = e=>{ currentDay=new Date(e.target.v
 window.addEventListener('resize', adjustGridHeight);
 
 /* Init */
+adjustGridHeight();
 fetchEvents();
 setInterval(fetchEvents, REFRESH_MS);
 </script>
