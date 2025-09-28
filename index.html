@@ -51,7 +51,7 @@
   }
 
   .event{
-    position:absolute;left:0;right:6px;background:var(--fieldColor, #eef2ff);
+    position:absolute;left:0;right:6px;background:var(--fieldColor, #26b1a9);
     border-left:4px solid rgba(255,255,255,.35);
     border-radius:10px;padding:6px 8px;font-size:13px;line-height:1.25;overflow:hidden;margin:0;cursor:pointer;color:#fff;
     z-index:5;
@@ -62,7 +62,7 @@
   .event:focus{outline:2px solid rgba(255,255,255,.6)}
   .event[data-level]{right:auto}
 
-  /* NEW: canceled games = black card */
+  /* Canceled events = black card */
   .event.canceled{
     background:#111 !important;
     color:#fff !important;
@@ -141,9 +141,8 @@ const END_HOUR   = 22;
 const PX_PER_MIN = 1;
 const REFRESH_MS = 60000;
 
-/* === NEW: your Google Sheet (CSV) for team→division === */
+/* === Sheet (CSV) for team→division === */
 const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/15CnN0W-He1USh4vYeKiKNu4t0ySPgtEy_7UaGrO38CM/export?format=csv&gid=0";
-/* Cache the sheet in-memory for this page load only (simple + fast) */
 let TEAM_DIV_MAP = null;
 
 /* ====== State ====== */
@@ -168,7 +167,7 @@ function linkify(text){
   });
 }
 
-/* ====== Division helpers (existing fallback) ====== */
+/* ====== Division helpers (kept for other logic; not used to set division) ====== */
 function normalizeDivision(s){ if(!s) return ""; s=s.replace(/[–—]/g,'-').replace(/\s+/g,' ').trim();
   let m=/^(\d{1,2})\s*[Uu]\b(?:\s*(AA|AAA|A|B|C|Gold|Silver|Bronze|American|National))?$/i.exec(s);
   if(m){const age=+m[1]; if(age>=4&&age<=18) return `${age}U${m[2]?' '+m[2].toUpperCase():''}`; return "";}
@@ -188,7 +187,7 @@ function resolveDivisionFrom(title,desc,scheduleRaw){
   const t=detectDivisionAnywhere(title); return t||"";
 }
 
-/* ====== NEW: Sheet → division logic ====== */
+/* ====== CSV loader ====== */
 function parseCSV(text){
   const rows=[]; let row=[],cell='',q=false;
   for(let i=0;i<text.length;i++){
@@ -236,9 +235,10 @@ async function ensureTeamMap(){
   }
 }
 
+/* Pull team names from titles */
 function parseTeamsFromTitle(title){
   if (!title) return [];
-  let s = title.replace(/\s+-\s+[^@]+$/,'').trim(); // drop trailing " - Field/Coach"
+  let s = title.replace(/\s+-\s+[^@]+$/,'').trim();
   const parts = s.split(/\s+@\s+| vs\.? | v\.? /i);
   if (parts.length === 1){
     const p2 = s.split(/\s*-\s*/);
@@ -252,8 +252,7 @@ function parseTeamsFromTitle(title){
   return [clean(s)].filter(Boolean);
 }
 
-// Division must come ONLY from the team→division sheet.
-// If no match, leave it blank (no guessing from title/desc).
+/* Division must come ONLY from sheet */
 function divisionFromSheetOnly(title){
   const teams = parseTeamsFromTitle(title);
   for (const t of teams){
@@ -289,7 +288,6 @@ function isCanceledText(text){
 async function fetchEvents(){
   clearError(); const statusEl=document.getElementById("status"); statusEl.textContent="Loading…";
   try{
-    /* NEW: load team map once per page */
     if (TEAM_DIV_MAP === null) { await ensureTeamMap(); }
 
     const now=new Date();
@@ -307,11 +305,8 @@ async function fetchEvents(){
       const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
       const schedule=(ev.schedule||"").trim();
 
-      /* NEW: canceled flag */
       const canceled = isCanceledText(title) || isCanceledText(desc);
-
-      /* Division resolution */
-      const div = divisionFromSheetOrFallback(title, desc, schedule);
+      const div = divisionFromSheetOnly(title);  // <-- FIXED: use sheet-only
 
       let field=fieldFromDescription(desc);
       if(!field) field=guessFieldFromText(title, loc);
@@ -366,14 +361,12 @@ function render(){
 
   const colsList = fieldFilter ? [fieldFilter] : fields.slice();
 
-  /* Header labels (color-coded) */
   const headCols = document.getElementById("headCols");
   headCols.innerHTML = colsList.map(f=>{
     const c=colorForField(f);
     return `<div class="colHead" style="background:${c};color:#fff">${f}</div>`;
   }).join("");
 
-  /* Time rail */
   const hourPx=60*PX_PER_MIN;
   document.getElementById("body").style.setProperty('--hourPx', hourPx+'px');
   const railInner=document.getElementById("timeRailInner");
@@ -388,7 +381,6 @@ function render(){
     }
   }
 
-  /* Columns + events */
   const cols=document.getElementById("cols");
   const colW = window.matchMedia('(max-width: 640px)').matches ? 'minmax(120px,1fr)' : 'minmax(140px,1fr)';
   cols.style.gridAutoColumns = colW;
@@ -444,10 +436,8 @@ function render(){
     cols.appendChild(col);
   });
 
-  /* Header scroll-sync */
   const bodyEl=document.getElementById("body");
   bodyEl.onscroll = () => { headCols.style.transform = `translateX(${-bodyEl.scrollLeft}px)`; };
-
   document.getElementById("status").textContent=`Showing ${iso} • ${dayEvents.length} events`;
 }
 
