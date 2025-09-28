@@ -252,13 +252,15 @@ function parseTeamsFromTitle(title){
   return [clean(s)].filter(Boolean);
 }
 
-function divisionFromSheetOrFallback(title, desc, schedule){
+// Division must come ONLY from the team→division sheet.
+// If no match, leave it blank (no guessing from title/desc).
+function divisionFromSheetOnly(title){
   const teams = parseTeamsFromTitle(title);
   for (const t of teams){
     const hit = TEAM_DIV_MAP && TEAM_DIV_MAP[t.toLowerCase()];
     if (hit) return hit;
   }
-  return schedule || resolveDivisionFrom(title, desc, schedule);
+  return "";
 }
 
 /* ---------- Field helpers ---------- */
