@@ -62,14 +62,6 @@
   .event:focus{outline:2px solid rgba(255,255,255,.6)}
   .event[data-level]{right:auto}
 
-  /* CANCELED: black card styling */
-  .event.canceled{
-    background:#111 !important;
-    color:#fff !important;
-    border-left-color:rgba(255,255,255,.35) !important;
-  }
-  .event.canceled .muted{ color:rgba(255,255,255,.9) !important; }
-
   /* Details sheet (modal) */
   .sheetBack{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:50}
   .sheet{
@@ -162,7 +154,7 @@ function clearError(){ const box=document.getElementById("err"); box.style.displ
 function linkify(text){
   if(!text) return "";
   const urlRe=/(https?:\/\/[^\s<>()]+)|((?:www\.)[^\s<>()]+)/gi;
-  return text.replace(urlRe,(m)=>{const url=m.startsWith('http')?m:`http://${m}`;return `<a href="${url}" target="_blank" rel="noopener noreferrer">${m}</a>`);};
+  return text.replace(urlRe,(m)=>{const url=m.startsWith('http')?m:`http://${m}`;return `<a href="${url}" target="_blank" rel="noopener noreferrer">${m}</a>`;});
 }
 
 /* ====== Division helpers (existing fallback) ====== */
@@ -186,6 +178,7 @@ function resolveDivisionFrom(title,desc,scheduleRaw){
 }
 
 /* ====== NEW: Sheet → division logic ====== */
+/* Tiny CSV parser (quoted commas supported) */
 function parseCSV(text){
   const rows=[]; let row=[],cell='',q=false;
   for(let i=0;i<text.length;i++){
@@ -205,6 +198,7 @@ function parseCSV(text){
   return rows;
 }
 
+/* Build {team → division} from your sheet (fetched once per page load) */
 async function ensureTeamMap(){
   if (TEAM_DIV_MAP) return TEAM_DIV_MAP;
   try{
@@ -233,9 +227,11 @@ async function ensureTeamMap(){
   }
 }
 
+/* Pull team names from common titles like:
+   "Warriors - 9/10A @ Greenhill Hornets 9U - Poynor" */
 function parseTeamsFromTitle(title){
   if (!title) return [];
-  let s = title.replace(/\s+-\s+[^@]+$/,'').trim();
+  let s = title.replace(/\s+-\s+[^@]+$/,'').trim(); // drop trailing " - Field/Coach"
   const parts = s.split(/\s+@\s+| vs\.? | v\.? /i);
   if (parts.length === 1){
     const p2 = s.split(/\s*-\s*/);
@@ -249,6 +245,7 @@ function parseTeamsFromTitle(title){
   return [clean(s)].filter(Boolean);
 }
 
+/* Use sheet map first; if no match, fall back to old logic */
 function divisionFromSheetOrFallback(title, desc, schedule){
   const teams = parseTeamsFromTitle(title);
   for (const t of teams){
@@ -274,12 +271,6 @@ function smartSort(a,b){ const key=s=>{ const m=s.match(/^([A-Za-z ]+?)(?:\s+(\d
 const FIELD_PALETTE=['#0ea5e9','#ef4444','#10b981','#6366f1','#f59e0b','#14b8a6','#6d28d9','#84cc16','#f97316','#1f7a8c','#e11d48','#22c55e'];
 function colorForField(name){ if(!name) return '#3b82f6'; let h=0; for(let i=0;i<name.length;i++) h=(h*31 + name.charCodeAt(i))>>>0; return FIELD_PALETTE[h % FIELD_PALETTE.length]; }
 
-/* ====== Canceled detector ====== */
-function isCanceledText(text){
-  if(!text) return false;
-  return /\b(cancel+ed|cancel+led|ppd|postponed|rain\s*out|rainout|rained\s*out)\b/i.test(text);
-}
-
 /* ====== Fetch from proxy ====== */
 async function fetchEvents(){
   clearError(); const statusEl=document.getElementById("status"); statusEl.textContent="Loading…";
@@ -302,16 +293,13 @@ async function fetchEvents(){
       const title=ev.title||"", loc=ev.location||"", desc=ev.description||"";
       const schedule=(ev.schedule||"").trim();
 
-      /* NEW: canceled flag */
-      const canceled = isCanceledText(title) || isCanceledText(desc);
-
-      /* Division resolution */
+      /* NEW: division from your sheet first */
       const div = divisionFromSheetOrFallback(title, desc, schedule);
 
       let field=fieldFromDescription(desc);
       if(!field) field=guessFieldFromText(title, loc);
 
-      return { s:start, e:end, t:title, l:loc, desc, div, field, schedule, calendarName:ev.calendarName||"", canceled };
+      return { s:start, e:end, t:title, l:loc, desc, div, field, schedule, calendarName:ev.calendarName||"" };
     }).filter(e=>e.s && e.e);
 
     fields = uniq(allEvents.map(e=>e.field).filter(nonEmpty)).sort(smartSort);
@@ -411,8 +399,6 @@ function render(){
 
       const node=document.createElement('div');
       node.className='event';
-      if (ev.canceled) node.classList.add('canceled');
-
       node.style.top=topPx+'px';
       node.style.height=height+'px';
       node.style.left=`calc(${leftPct}% + ${gap/2}px)`;
@@ -420,14 +406,9 @@ function render(){
       node.setAttribute('data-level', level);
       node.setAttribute('tabindex','0');
       node.title=(ev.l||"").replace(/\s+/g," ").trim();
-
-      const titleHtml = ev.canceled && !/^canc(e|a)l?led:/i.test(ev.t)
-        ? `CANCELED: ${ev.t}`
-        : ev.t;
-
       node.innerHTML=`
         <div class="time">${fmtTime(ev.s)} – ${fmtTime(ev.e)}</div>
-        <div class="title">${titleHtml}</div>
+        <div class="title">${ev.t}</div>
         ${ev.div ? `<div class="muted">${ev.div}</div>` : ""}
       `;
       const open=()=>openSheet(ev);
@@ -460,12 +441,7 @@ const sheetBack=document.getElementById('sheetBack');
 const sheetClose=document.getElementById('sheetClose');
 function openSheet(ev){
   document.getElementById('sheetTitle').textContent=ev.t||'(No title)';
-  const metaParts=[
-    `${fmtTime(ev.s)} – ${fmtTime(ev.e)}`,
-    ev.field?`• ${ev.field}`:'',
-    ev.div?`• <strong>${ev.div}</strong>`:'',
-    ev.canceled?`• <strong style="color:#b91c1c">Canceled</strong>`:''
-  ].filter(Boolean);
+  const metaParts=[`${fmtTime(ev.s)} – ${fmtTime(ev.e)}`, ev.field?`• ${ev.field}`:'', ev.div?`• <strong>${ev.div}</strong>`:''].filter(Boolean);
   const locLine=ev.l?`<br>Location: ${ev.l}`:'';
   document.getElementById('sheetMeta').innerHTML=metaParts.join(' ')+locLine;
   document.getElementById('sheetDesc').innerHTML=ev.desc?linkify(ev.desc):'<span class="muted">No description.</span>';
