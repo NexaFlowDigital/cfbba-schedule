@@ -142,10 +142,9 @@ const REFRESH_MS = 60000;
    and gid must be the tab that report lives on (gid=0 is the first tab). */
 const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/15CnN0W-He1USh4vYeKiKNu4t0ySPgtEy_7UaGrO38CM/export?format=csv&gid=0";
 
-/* The proxy now works out the division from the calendar feed itself.
-   true  = feed wins, sheet only fills in what the feed leaves blank
-   false = sheet wins, old behavior */
-const USE_FEED_DIVISION = true;
+/* The calendar feed carries no division data, so the sheet is the source.
+   Leave this false. */
+const USE_FEED_DIVISION = false;
 
 let TEAM_DIV_MAP = null; // { [teamLower]: division }
 
