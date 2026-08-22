@@ -131,14 +131,22 @@
 
 <script>
 /* ====== Config ====== */
-const PROXY_URL = "https://script.google.com/macros/s/AKfycbzjOOS2Sdi5MpQWfYcSlIdTveRdo-Pwi5h9Y8FVFzuCplGtLF386fwdEIUjalxpEVK-/exec";
+const PROXY_URL = "https://script.google.com/macros/s/AKfycbz0GieP7H0ndN9tsNdGNIpGbKbvYwZ05L_iWFBW-1adSzaP-ZKp2tBc5x8puVZkqexk/exec";
 const START_HOUR = 7;
 const END_HOUR   = 22;
 const PX_PER_MIN = 1;
 const REFRESH_MS = 60000;
 
-/* Team→division mapping sheet (CSV) – exact match only */
+/* Team→division mapping sheet (CSV).
+   The ID after /d/ must be the sheet holding THIS season's team detail report,
+   and gid must be the tab that report lives on (gid=0 is the first tab). */
 const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/15CnN0W-He1USh4vYeKiKNu4t0ySPgtEy_7UaGrO38CM/export?format=csv&gid=0";
+
+/* The proxy now works out the division from the calendar feed itself.
+   true  = feed wins, sheet only fills in what the feed leaves blank
+   false = sheet wins, old behavior */
+const USE_FEED_DIVISION = true;
+
 let TEAM_DIV_MAP = null; // { [teamLower]: division }
 
 /* ====== State ====== */
@@ -158,6 +166,17 @@ function linkify(text){
   if(!text) return "";
   const urlRe=/(https?:\/\/[^\s<>()]+)|((?:www\.)[^\s<>()]+)/gi;
   return text.replace(urlRe,(m)=>{ const url=m.startsWith('http')?m:`http://${m}`; return `<a href="${url}" target="_blank" rel="noopener noreferrer">${m}</a>`; });
+}
+
+/* Normalize a team name for matching: collapse all whitespace including
+   non-breaking spaces, drop stray punctuation spacing, lowercase. */
+function normKey(s){
+  return String(s||"")
+    .replace(/\u00a0/g," ")
+    .replace(/\s*-\s*/g," - ")
+    .replace(/\s+/g," ")
+    .trim()
+    .toLowerCase();
 }
 
 /* Canceled detector */
@@ -197,17 +216,26 @@ async function ensureTeamMap(){
     if(!rows.length) return (TEAM_DIV_MAP = {});
 
     const header = rows[0].map(h => String(h||'').trim());
-    const teamIdx = header.findIndex(h => /team/i.test(h));
-    const divIdx  = header.findIndex(h => /division/i.test(h));
-    if (teamIdx < 0 || divIdx < 0) return (TEAM_DIV_MAP = {});
+    /* "Team Name" wins over "Team Code"; "Division Name" or "Division" both work */
+    let teamIdx = header.findIndex(h => /team\s*name/i.test(h));
+    if (teamIdx < 0) teamIdx = header.findIndex(h => /team/i.test(h) && !/code/i.test(h));
+    const divIdx = header.findIndex(h => /division/i.test(h));
+
+    if (teamIdx < 0 || divIdx < 0){
+      console.warn('Team map: could not find Team / Division columns. Header was:', header);
+      return (TEAM_DIV_MAP = {});
+    }
 
     const map = {};
+    let count = 0;
     for(let i=1;i<rows.length;i++){
       const team = String(rows[i][teamIdx]||'').trim();
       const div  = String(rows[i][divIdx]||'').trim();
       if(!team || !div) continue;
-      map[team.toLowerCase()] = div; // exact, case-insensitive
+      map[normKey(team)] = div;
+      count++;
     }
+    console.log('Team map loaded:', count, 'teams,', uniq(Object.values(map)).length, 'divisions');
     TEAM_DIV_MAP = map;
     return map;
   }catch(e){
@@ -219,19 +247,34 @@ async function ensureTeamMap(){
 /* Extract the two team names from a title WITHOUT altering them */
 function parseTeamsFromTitleExact(title){
   if (!title) return [];
-  const parts = title.split(/\s+@\s+| vs\.? | v\.? /i).map(s=>s.trim()).filter(Boolean);
-  // Only take the first two tokens (home/away); keep them exactly as written
+  const parts = String(title)
+    .replace(/^\s*canc(e|a)l?led\s*:\s*/i,'')
+    .split(/\s+@\s+|\s+vs\.?\s+|\s+v\.?\s+/i)
+    .map(s=>s.trim()).filter(Boolean);
   return parts.slice(0,2);
 }
 
-/* Division must come ONLY from exact team matches in the sheet */
+/* Division from exact team matches in the sheet. When both teams are found
+   and agree, that wins, which protects against duplicate team names that
+   exist in two different divisions. */
 function divisionFromSheetExact(title){
   const teams = parseTeamsFromTitleExact(title);
-  for (const t of teams){
-    const hit = TEAM_DIV_MAP && TEAM_DIV_MAP[t.toLowerCase()];
-    if (hit) return hit;
-  }
-  return ""; // no fallback/guessing
+  const hits = teams.map(t => TEAM_DIV_MAP && TEAM_DIV_MAP[normKey(t)]).filter(Boolean);
+  if (!hits.length) return "";
+  if (hits.length > 1 && hits[0] === hits[1]) return hits[0];
+  return hits[0];
+}
+
+/* Division carried inside the feed, e.g. "2026 Fall Season - 9/10 A American."
+   Strips the season prefix and any duplicated repeat of the same phrase. */
+function divisionFromFeed(ev){
+  if (ev.division) return String(ev.division).trim();
+  const raw = String(ev.schedule || ev.categories || "").trim();
+  if (!raw) return "";
+  let v = raw.split(/[,;]|\r|\n/)[0].trim();
+  v = v.replace(/^.*?season\s*[-–—]\s*/i, "").trim();
+  v = v.replace(/[.\s]+$/, "").trim();
+  return v;
 }
 
 /* ---------- Field helpers ---------- */
@@ -264,6 +307,9 @@ async function fetchEvents(){
     if(!res.ok){ showError(`Proxy error (${res.status}).`); statusEl.textContent="Proxy error."; return; }
     const data = await res.json();
     if(!data || !Array.isArray(data.items)){ showError("Proxy returned unexpected data."); statusEl.textContent="Bad data."; return; }
+    if(data.error){ showError(data.error); }
+
+    let unmatched = [];
 
     allEvents = data.items.map(ev=>{
       const start=ev.start?new Date(ev.start):null;
@@ -272,13 +318,20 @@ async function fetchEvents(){
       const schedule=(ev.schedule||"").trim();
 
       const canceled = isCanceledText(title) || isCanceledText(desc);
-      const div = divisionFromSheetExact(title); // EXACT ONLY
+
+      let div = USE_FEED_DIVISION ? divisionFromFeed(ev) : "";
+      if (!div) div = divisionFromSheetExact(title);
+      if (!div) unmatched.push(title);
 
       let field=fieldFromDescription(desc);
       if(!field) field=guessFieldFromText(title, loc);
 
       return { s:start, e:end, t:title, l:loc, desc, div, field, schedule, calendarName:ev.calendarName||"", canceled };
     }).filter(e=>e.s && e.e);
+
+    if (unmatched.length){
+      console.warn('No division for', unmatched.length, 'events. Sample:', uniq(unmatched).slice(0,20));
+    }
 
     fields = uniq(allEvents.map(e=>e.field).filter(nonEmpty)).sort(smartSort);
     gameDates = uniq(allEvents.map(e=>localYMD(e.s))).sort();
